@@ -1,0 +1,4 @@
+aliases { 
+	serial0 = "12345";
+	ethernet0 = "/path/";
+};

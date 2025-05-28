@@ -1,0 +1,59 @@
+/dts-v1/;
+
+/* 	
+	DTS style hardware configuration for Commodore Amiga.
+	Format is a sub-set of the DTS without some capabilities.
+	The /include/ directive does work. /delete-node/ and /delete-property/
+	are not implemented (you can just comment out if not needed.
+	/dts-v1/ is not required but useful to auto-identify file format in AmigaOS.
+	Labels are supported for nodes and properties. Don't use in values. 
+*/
+
+/ {
+	bus {
+		compatible = "simple-bus";
+		ranges;
+		interrupts = <6>;
+		/* Port oriented config
+		rtc: port@dc0001 {
+			status="okay";
+			reg = <0xDC0001 0x10>;
+		};
+		port1: port@d80001 {
+			status="okay";
+			reg = <0xD80001 0x10>;
+		};
+		port2: port@d84001{
+			status="disabled";
+			reg = <0xD84001 0x10>;
+		};
+		port3: port@d88001{
+			status="disabled";
+			reg = <0xD88001 0x10>;
+		};
+		port4: port@d8c001{
+			status="disabled";
+			reg = <0xD8C001 0x10>;
+		};
+		*/
+		/* Alternative config by device on bus */
+		spider: clockport-device@d80001 {
+			compatible = "clockport-spi";
+			model = "niklas,spider-v1";
+			reg = <0xD80001 0x10>;
+		};
+		
+		picowyfy: clockport-device@d84001 {
+			compatible = "clockport-wifi";
+			model = "niklas,picowyfy-v1";
+			reg = <0xD80001 0x10>;
+		};
+		
+		cp-314: clockport-device@d88001 {
+			compatible = "clockport-wifi", "clockport-spi", "clockport-storage";
+			model = "niklas,cp-A314-v1";
+			reg = <0xD80001 0x10>;
+		};
+		
+	};
+};

@@ -1,0 +1,22 @@
+==id $VER: devicetree_lib.sfd 1.0 (28.5.2025)
+==base _DeviceTreeBase
+==include <exec/types.h>
+==copyright Copyright (C) 2025 Aidan Holmes
+==bias 30
+==public
+APTR  DeviceTree_GetNode(char *path)(a0)
+char* DeviceTree_GetNodeName(APTR node)(a0)
+char* DeviceTree_GetNodeAddress(APTR node)(a0)
+APTR  DeviceTree_GetFirstChildNode(char *path, char *compatible)(a0/a1)
+APTR  DeviceTree_GetNextSiblingNode(APTR node, char *compatible)(a0/a1)
+APTR  DeviceTree_GetProperty(APTR node, char *name)(a0/a1)
+APTR  DeviceTree_GetFirstProperty(APTR node)(a0)
+APTR  DeviceTree_GetNextProperty(APTR lastProperty)(a0)
+char* DeviceTree_GetPropertyName(APTR property)(a0)
+char* DeviceTree_GetPropertyStringValue(APTR property)(a0)
+APTR  DeviceTree_GetFirstPropertyValue(APTR property)(a0)
+APTR  DeviceTree_GetNextPropertyValue(APTR value)(a0)
+ULONG DeviceTree_GetValueSize(APTR value)(a0)
+UWORD DeviceTree_GetValueType(APTR value)(a0)
+APTR  DeviceTree_GetValue(APTR value)(a0)
+==end
