@@ -1,4 +1,4 @@
-#include "/Include/C/proto/devicetree.h"
+#include "/Include/C/proto/dts.h"
 #include <exec/types.h>
 #include <exec/exec.h>
 #include <proto/exec.h>
@@ -14,26 +14,26 @@
 int main (int argc, char **argv)
 {
 	APTR dtBus=NULL, n=NULL, p=NULL, thisNode=NULL, v=NULL ;
-	struct Library *DeviceTreeBase = NULL ;
+	struct Library *DtsParserBase = NULL ;
 	char *modelName, *nodeAddress;
 	ULONG *address;
 	
-	DeviceTreeBase = OpenLibrary("devicetree.library", 0);
+	DtsParserBase = OpenLibrary("dts.library", 0);
 	
-	if (!DeviceTreeBase){
+	if (!DtsParserBase){
 		printf("Cannot open device tree library\n");
 		return 0;
 	}
-	dtBus = DeviceTree_GetNode("/bus") ;
+	dtBus = DTS_GetNode("/bus") ;
 	if (!dtBus){
 		printf("No /bus node in the DTS\n");
 		goto exit;
 	}
 	
-	if ((n = DeviceTree_GetFirstChildNode("/bus", "clockport-spi"))){
+	if ((n = DTS_GetFirstChildNode("/bus", "clockport-spi"))){
 		printf("Found a compatible clockport device - ");
-		if ((p=DeviceTree_GetProperty(n, "model"))){
-			if ((modelName = DeviceTree_GetPropertyStringValue(p))){
+		if ((p=DTS_GetProperty(n, "model"))){
+			if ((modelName = DTS_GetPropertyStringValue(p))){
 				printf("%s\n", modelName);
 				if (strcmp(modelName, "niklas,spider-v1") == 0){
 					// This is the model and compatability we were looking for
@@ -54,15 +54,15 @@ int main (int argc, char **argv)
 	
 	if (thisNode){
 		printf("Found the config node required:\n");
-		printf("    [Name: %s]", DeviceTree_GetNodeName(thisNode));
-		if ((nodeAddress = DeviceTree_GetNodeAddress(thisNode)) && nodeAddress[0] != '\0'){
+		printf("    [Name: %s]", DTS_GetNodeName(thisNode));
+		if ((nodeAddress = DTS_GetNodeAddress(thisNode)) && nodeAddress[0] != '\0'){
 			printf("@[Address: %s]\n", nodeAddress);
 		}
 
-		if ((p=DeviceTree_GetProperty(n, "reg"))){
-			for(v=DeviceTree_GetFirstPropertyValue(p); v; v=DeviceTree_GetNextPropertyValue(v)){
-				if (DeviceTree_GetValueType(v) == DT_VALUE_ULONG_ARRAY && DeviceTree_GetValueSize(v) >= 1){
-					address = (ULONG*)DeviceTree_GetValue(v);
+		if ((p=DTS_GetProperty(n, "reg"))){
+			for(v=DTS_GetFirstPropertyValue(p); v; v=DTS_GetNextPropertyValue(v)){
+				if (DTS_GetValueType(v) == DT_VALUE_ULONG_ARRAY && DTS_GetValueSize(v) >= 1){
+					address = (ULONG*)DTS_GetValue(v);
 					printf("    [Reg value specifies device at address 0x%04X]\n", address[0]);
 				}
 			}
@@ -72,5 +72,5 @@ int main (int argc, char **argv)
 	}
 	
 exit:
-	CloseLibrary(DeviceTreeBase);
+	CloseLibrary(DtsParserBase);
 }	

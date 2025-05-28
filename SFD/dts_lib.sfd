@@ -1,0 +1,22 @@
+==id $Id: dts_lib.sfd,v 1.0 2025/05/28 aidan Exp $
+==base _DtsParserBase
+==include <exec/types.h>
+==copyright Copyright (C) 2025 Aidan Holmes
+==bias 30
+==public
+APTR  DTS_GetNode(char *path)(a0)
+char* DTS_GetNodeName(APTR node)(a0)
+char* DTS_GetNodeAddress(APTR node)(a0)
+APTR  DTS_GetFirstChildNode(char *path, char *compatible)(a0/a1)
+APTR  DTS_GetNextSiblingNode(APTR node, char *compatible)(a0/a1)
+APTR  DTS_GetProperty(APTR node, char *name)(a0/a1)
+APTR  DTS_GetFirstProperty(APTR node)(a0)
+APTR  DTS_GetNextProperty(APTR lastProperty)(a0)
+char* DTS_GetPropertyName(APTR property)(a0)
+char* DTS_GetPropertyStringValue(APTR property)(a0)
+APTR  DTS_GetFirstPropertyValue(APTR property)(a0)
+APTR  DTS_GetNextPropertyValue(APTR value)(a0)
+ULONG DTS_GetValueSize(APTR value)(a0)
+UWORD DTS_GetValueType(APTR value)(a0)
+APTR  DTS_GetValue(APTR value)(a0)
+==end

@@ -1,0 +1,19 @@
+##base _DtsParserBase
+##public
+##bias 30
+DTS_GetNode(path)(a0)
+DTS_GetNodeName(node)(a0)
+DTS_GetNodeAddress(node)(a0)
+DTS_GetFirstChildNode(path,compatible)(a0/a1)
+DTS_GetNextSiblingNode(node,compatible)(a0/a1)
+DTS_GetProperty(node,name)(a0/a1)
+DTS_GetFirstProperty(node)(a0)
+DTS_GetNextProperty(lastProperty)(a0)
+DTS_GetPropertyName(property)(a0)
+DTS_GetPropertyStringValue(property)(a0)
+DTS_GetFirstPropertyValue(property)(a0)
+DTS_GetNextPropertyValue(value)(a0)
+DTS_GetValueSize(value)(a0)
+DTS_GetValueType(value)(a0)
+DTS_GetValue(value)(a0)
+##end
