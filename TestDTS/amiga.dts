@@ -10,55 +10,39 @@
 */
 
 / {
-	bus {
+	amiga: gayle{
+		phandle = <59>;
 		compatible = "simple-bus";
 		ranges;
 		interrupts = <6>;
-		/* Port oriented config
-		rtc: port@dc0001 {
-			status="okay";
-			reg = <0xDC0001 0x10>;
-		};
-		port1: port@d80001 {
-			status="okay";
-			reg = <0xD80001 0x10>;
-		};
-		port2: port@d84001{
-			status="disabled";
-			reg = <0xD84001 0x10>;
-		};
-		port3: port@d88001{
-			status="disabled";
-			reg = <0xD88001 0x10>;
-		};
-		port4: port@d8c001{
-			status="disabled";
-			reg = <0xD8C001 0x10>;
-		};
-		*/
-		/* Alternative config by device on bus */
+
 		spider: clockport-device@d80001 {
 			compatible = "clockport-spi";
-			model = "niklas,spider-v1";
+			model = "rpi,spider-v1";
 			reg = <0xD80001 0x10>;
 			a_val = [A0 // A thing
 			        A1 // another thing
 					A2];
+			interrupts = <&amiga 4 5 6 0>;
 		};
 		
 		picowyfy: clockport-device@d84001 {
 			compatible = "clockport-wifi";
-			model = "niklas,picowyfy-v1";
+			model = "rpi,picowyfy-v1";
 			reg = <0xD80001 0x10>;
 			inlinecomment = <0x11 0x00002345 /* Comment */ 0xFF 99>;
+			
+			interrupts = <&amiga>;
 		};
 		
 		cp-314: clockport-device@d88001 {
 			compatible = "clockport-wifi", "clockport-spi", "clockport-storage";
-			model = "niklas,cp-A314-v1";
+			model = "rpi,cp-A314-v1";
 			reg = <0xD80001 0x10>;
 			multiline = <0x00 0x00 0x00 0x00 0x00 /* stuff */
-			             0x01 0x02 0x0004 0x0005 0x06> /* and nonsense */
+			             0x01 0x02 0x0004 0x0005 0x06>; /* and nonsense */
+						 
+			interrupts = <10 0x44 &amiga>;
 		};
 		
 	};

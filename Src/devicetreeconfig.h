@@ -3,6 +3,7 @@
 
 #include <exec/types.h>
 #include <dos/dos.h>
+#include <utility/tagitem.h>
 
 #define DT_MAX_NODE_LABEL    	31 + 1
 #define DT_MAX_NODE_NAME    	50
@@ -29,6 +30,10 @@
 #define DT_RETURN_REPLAY			4
 #define DT_RETURN_SYSERR			5
 
+#define DT_ENCODED_VALUE_U32		TAG_USER+0
+#define DT_ENCODED_VALUE_REFERENCE 	TAG_USER+1
+
+
 struct devicetreeObject;
 struct devicetreeValue;
 struct devicetreeProperty;
@@ -50,6 +55,21 @@ struct devicetreeValue
 	void *value;
 	ULONG size ;
 	UWORD type;
+};
+
+struct devicetreeEncodedArrayValue // effectively a tag item
+{
+	ULONG flags;
+	ULONG value; // could be a value or reference memory address
+};
+
+struct devicetreeReference
+{
+	struct devicetreeReference *next;
+	struct devicetreeReference *prev;
+	char referenceName[DT_MAX_NODE_LABEL]; // Although node holds the label name this is needed when node not yet found and may be orphan ref
+	struct devicetreeNode *node;
+	ULONG phandleRef;
 };
 
 struct devicetreeProperty
@@ -113,6 +133,7 @@ struct devicetreeConfig{
 	UWORD tempIndex;
 	char lastchar;
 	char label[DT_MAX_NODE_LABEL];
+	struct devicetreeReference *refTop; //Store all known references in this list
 	struct devicetreeNode *currentNode;
 	struct devicetreeObject *currentObject;
 	struct devicetreeStream *currentStream;

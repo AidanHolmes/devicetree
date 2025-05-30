@@ -23,9 +23,10 @@ void printNode(struct devicetreeNode *n1, UWORD indent)
 	struct devicetreeCommand *cmd;
 	struct devicetreeProperty *prop;
 	struct devicetreeValue *val;
-	ULONG *ulArray;
+	struct TagItem *ulArray;
 	UBYTE *bArray;
 	UWORD i=0;
+	struct devicetreeReference *ref;
 	
 	doIndent(indent);printf("[Node name: \"%s\", label: \"%s\", address: \"%s\"]\n", n1->name, n1->label, n1->unitAddress);
 	//if(n1->firstObject){
@@ -37,10 +38,15 @@ void printNode(struct devicetreeNode *n1, UWORD indent)
 					for(val=prop->values; val; val=val->next){
 						switch(val->type){
 							case DT_VALUE_ULONG_ARRAY:
-								printf("(ulong array) ");
-								ulArray = (ULONG*)val->value;
+								printf("(tag array) ");
+								ulArray = (struct TagItem *)val->value;
 								for(i=0; i<val->size; i++){
-									printf("0x%04X ", ulArray[i]);
+									if (ulArray[i].ti_Tag == DT_ENCODED_VALUE_REFERENCE){
+										ref = (struct devicetreeReference*)ulArray[i].ti_Data;
+										printf("<phandle:%d node:0x%p> ", ref->phandleRef, ref->node);
+									}else if (ulArray[i].ti_Tag == DT_ENCODED_VALUE_U32){	
+										printf("<u32:0x%04X> ", ulArray[i].ti_Data);
+									}
 								}
 								break;
 							case DT_VALUE_STRING:

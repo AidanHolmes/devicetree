@@ -8,6 +8,63 @@
 
 #define DOSBase config->dos
 
+/*inline*/ static void _pushInChar(char *str, char c, UWORD *index, ULONG max)
+{
+	if (*index < max-1){
+		str[*index] = c;
+		*index +=1;
+		str[*index] = '\0'; // ensure terminated
+	}
+}
+
+/*inline*/ static void _popOutChar(char *str, UWORD *index)
+{
+	if (*index > 0){
+		*index -= 1;
+		str[*index] = '\0';
+	}
+}
+
+static struct devicetreeReference* _getReference(struct devicetreeConfig *config, char *name, ULONG phandle, BOOL create_if_nonexist)
+{
+	struct devicetreeReference *r, *attachTo ;
+	
+	for	(r=config->refTop; r; r=r->next){
+		if (name){
+			if (dtStriCmp(name, r->referenceName, DT_MAX_NODE_LABEL)){
+				return r; // found the node requested
+			}
+		}else{
+			// no name given, so search by phandle value
+			if (phandle == r->phandleRef){
+				return r; // found node by phandle
+			}
+		}
+	}
+
+	// nothing found if here.
+	if (create_if_nonexist){ // should we create blank new entry if they don't exist in list?
+		r = AllocVec(sizeof(struct devicetreeReference), MEMF_ANY | MEMF_CLEAR);
+		if (r){
+			// Add ref name or phandle
+			if (name){
+				dtStrCpy(r->referenceName, name, DT_MAX_NODE_LABEL);
+			}else{
+				r->phandleRef = phandle;
+			}
+			if (!config->refTop){
+				config->refTop = r;
+			}else{
+				// Find last reference in linked list and add to end
+				for(attachTo=config->refTop; attachTo->next != NULL; attachTo=attachTo->next);
+				attachTo->next = r;
+				r->prev = attachTo ;
+			}
+		}
+	}
+	return r;
+}
+
 static struct devicetreeStream* _addStream(struct devicetreeConfig *config)
 {
 	struct devicetreeStream *p = NULL, *attachTo = NULL;
@@ -185,16 +242,66 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 	return DT_RETURN_NOERROR;
 }
 
-static UWORD _strToArray(char *str, struct devicetreeValue *value)
+static UWORD _handleKnownPropertyEncodedValue(struct devicetreeConfig *config, struct devicetreeProperty *property, UWORD index, UWORD val)
 {
-	char *p = NULL;
-	BOOL readingNumber = FALSE, isHex = FALSE;
-	ULONG val = 0, *array = NULL;
-	UWORD elements = 0, run = 0;
+	struct devicetreeReference *ref=NULL;
+	
+	if (dtStriCmp(property->name, "phandle", DT_MAX_PROPERTY_NAME)){
+		if (index == 0){
+			// phandle first parameter is the reference ID
+			if (!(ref = _getReference(config, NULL, val, TRUE))){
+				return DT_RETURN_NOMEM;
+			}
+			// Set the reference label if the node has a label
+			if (property->_obj.node->label[0] != '\0'){
+				dtStrCpy(ref->referenceName, property->_obj.node->label, DT_MAX_NODE_LABEL);
+			}
+			// Set the node in reference list
+			ref->node = property->_obj.node;
+		}
+	}
+	return DT_RETURN_NOERROR;
+}
+
+static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetreeEncodedArrayValue *encval, UWORD index,  BOOL isRef, UWORD val, char *refName)
+{
+	struct devicetreeReference *ref=NULL;
+	struct devicetreeProperty *p=NULL;
+	UWORD ret = 0;
+	
+	if (config->currentObject->type == DT_OBJECT_PROPERTY){
+		p = (struct devicetreeProperty*)config->currentObject ;
+	}
+	if ((ret=_handleKnownPropertyEncodedValue(config,p,index,val)) != DT_RETURN_NOERROR){
+		return ret ;
+	}
+	
+	if (isRef){
+		if (!(ref = _getReference(config, refName, 0, TRUE))){
+			return DT_RETURN_NOMEM;
+		}
+		encval[index].flags = DT_ENCODED_VALUE_REFERENCE;
+		encval[index].value = (ULONG)ref;
+	}else{
+		encval[index].flags = DT_ENCODED_VALUE_U32;
+		encval[index].value = val;
+	}
+	
+	return DT_RETURN_NOERROR;
+}
+
+static UWORD _strToArray(struct devicetreeConfig *config, char *str, struct devicetreeValue *value)
+{
+	char *p = NULL, tempRef[DT_MAX_NODE_LABEL];
+	BOOL readingValue = FALSE, isHex = FALSE, readingRef = FALSE;
+	ULONG val = 0;
+	struct devicetreeEncodedArrayValue *array = NULL;
+	UWORD elements = 0, run = 0, tempRefIndex = 0, ret=0;
 	
 	for (run = 0; run < 2; run++){
 		elements = 0 ;
-		readingNumber = FALSE ;
+		readingValue = FALSE ;
+		readingRef = FALSE ;
 		isHex = FALSE ;
 		val =0;
 		for (p=str; *p; p++){
@@ -204,75 +311,73 @@ static UWORD _strToArray(char *str, struct devicetreeValue *value)
 				case '\n':
 				case ' ':
 				case '\t':
-					if (readingNumber){
+					if (readingValue){
 						if (run == 1){
-							array[elements] = val ;
+							if ((ret=_addToEncodedArray(config, array, elements, readingRef, val, tempRef)) != DT_RETURN_NOERROR){
+								return ret ;
+							}
 						}
 						elements++ ;
-						readingNumber = FALSE ;
+						readingValue = FALSE ;
+						readingRef = FALSE ;
 					}
 					val = 0;
 					isHex = FALSE ;
 					break;
+				case '&':
+					// reference
+					readingRef = TRUE ;
+					tempRefIndex = 0;
+					break;
 				default:
-					readingNumber = TRUE ;
-					if (*p >= 'A' && *p <= 'F'){
-						*p += 32; // convert to lower
-					}
-					if (*p >= '0' && *p <= '9'){
-						if (isHex){
-							val = (val * 16) + *p-48;
-						}else{
-							val = (val * 10) + *p-48;
-						}
-					}else if ((*p >= 'a' && *p <= 'f') && isHex){
-						val = (val * 16) + *p-87;
+					readingValue = TRUE ;
+					if (readingRef){
+						_pushInChar(tempRef, *p, &tempRefIndex, DT_MAX_NODE_LABEL);
 					}else{
-						if ((*p == 'x' || *p == 'X') && p != str && *(p-1) == '0'){
-							isHex = TRUE ;
+						if (*p >= 'A' && *p <= 'F'){
+							*p += 32; // convert to lower
+						}
+						if (*p >= '0' && *p <= '9'){
+							if (isHex){
+								val = (val * 16) + *p-48;
+							}else{
+								val = (val * 10) + *p-48;
+							}
+						}else if ((*p >= 'a' && *p <= 'f') && isHex){
+							val = (val * 16) + *p-87;
 						}else{
-							// unexpected char in stream
-							return DT_RETURN_PARAM_ERROR;
+							if ((*p == 'x' || *p == 'X') && p != str && *(p-1) == '0'){
+								isHex = TRUE ;
+							}else{
+								// unexpected char in stream
+								return DT_RETURN_PARAM_ERROR;
+							}
 						}
 					}
 			}
 		}
-		if (readingNumber){
+		if (readingValue){
 			if (run == 1){
-				array[elements] = val ;
+				if ((ret=_addToEncodedArray(config, array, elements,readingRef, val, tempRef)) != DT_RETURN_NOERROR){
+					return ret ;
+				}
 			}
 			elements++ ;
 		}
 		
 		if (run == 0){
-			value->size = elements;
-			array = (ULONG*)AllocVec(value->size * 4, MEMF_ANY | MEMF_CLEAR);
+			value->size = elements+1;
+			array = (struct devicetreeEncodedArrayValue*)AllocVec(value->size * sizeof(struct devicetreeEncodedArrayValue), MEMF_ANY | MEMF_CLEAR);
 			if (!array){
 				value->size = 0;
-				return DT_RETURN_NOERROR;
+				return DT_RETURN_NOMEM;
 			}
 			value->value = array ;
+			array[elements].flags = TAG_END;
 		}
 	}
 	
 	return DT_RETURN_NOERROR;
-}
-
-/*inline*/ static void _pushInChar(char *str, char c, UWORD *index, ULONG max)
-{
-	if (*index < max-1){
-		str[*index] = c;
-		*index +=1;
-		str[*index] = '\0'; // ensure terminated
-	}
-}
-
-/*inline*/ static void _popOutChar(char *str, UWORD *index)
-{
-	if (*index > 0){
-		*index -= 1;
-		str[*index] = '\0';
-	}
 }
 
 static UWORD _parseProperty(struct devicetreeConfig *config, char c)
@@ -369,7 +474,7 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 			if (c == '>'){
 				config->propertystate = dtpropUnknown;
 			
-				if ((ret=_strToArray(config->temp, config->currentValue)) != DT_RETURN_NOERROR){
+				if ((ret=_strToArray(config, config->temp, config->currentValue)) != DT_RETURN_NOERROR){
 					return ret;
 				}
 				config->tempIndex = 0;
