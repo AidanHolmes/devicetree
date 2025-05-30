@@ -83,6 +83,7 @@ typedef UWORD (*dt_object_callback)(struct devicetreeObject *obj) ;
 
 enum enConfigState {dtconfigStateNode, dtconfigStateProperty, dtconfigStateCommand, dtconfigStateComment, dtconfigStateCommentBlock};
 enum enPropertyState {dtpropUnknown, dtpropLogic, dtpropArray, dtpropByteString, dtpropText};
+enum enCommentState {dtcommentNode, dtcommentVar};
 enum enCommandState {dtcmdName, dtcmdValue};
 
 struct devicetreeStream;
@@ -107,8 +108,10 @@ struct devicetreeConfig{
 	enum enConfigState state;
 	enum enPropertyState propertystate ;
 	enum enCommandState cmdstate;
+	enum enCommentState commentstate;
 	char temp[DT_MAX_TEMP_STR];
 	UWORD tempIndex;
+	char lastchar;
 	char label[DT_MAX_NODE_LABEL];
 	struct devicetreeNode *currentNode;
 	struct devicetreeObject *currentObject;

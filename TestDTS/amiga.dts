@@ -41,18 +41,24 @@
 			compatible = "clockport-spi";
 			model = "niklas,spider-v1";
 			reg = <0xD80001 0x10>;
+			a_val = [A0 // A thing
+			        A1 // another thing
+					A2];
 		};
 		
 		picowyfy: clockport-device@d84001 {
 			compatible = "clockport-wifi";
 			model = "niklas,picowyfy-v1";
 			reg = <0xD80001 0x10>;
+			inlinecomment = <0x11 0x00002345 /* Comment */ 0xFF 99>;
 		};
 		
 		cp-314: clockport-device@d88001 {
 			compatible = "clockport-wifi", "clockport-spi", "clockport-storage";
 			model = "niklas,cp-A314-v1";
 			reg = <0xD80001 0x10>;
+			multiline = <0x00 0x00 0x00 0x00 0x00 /* stuff */
+			             0x01 0x02 0x0004 0x0005 0x06> /* and nonsense */
 		};
 		
 	};

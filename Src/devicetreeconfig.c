@@ -143,6 +143,8 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 			switch(*p){
 				case ' ':
 				case '\t':
+				case '\r':
+				case '\n':
 					break;
 				default:
 					if (*p >= 'A' && *p <= 'F'){
@@ -159,6 +161,7 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 					if (multi){
 						if (run == 1){
 							array[elements] = val ;
+							val = 0;
 						}
 						elements++;
 						multi = 0;
@@ -196,6 +199,9 @@ static UWORD _strToArray(char *str, struct devicetreeValue *value)
 		val =0;
 		for (p=str; *p; p++){
 			switch(*p){
+				case '\r':
+					break;
+				case '\n':
 				case ' ':
 				case '\t':
 					if (readingNumber){
@@ -261,6 +267,14 @@ static UWORD _strToArray(char *str, struct devicetreeValue *value)
 	}
 }
 
+/*inline*/ static void _popOutChar(char *str, UWORD *index)
+{
+	if (*index > 0){
+		*index -= 1;
+		str[*index] = '\0';
+	}
+}
+
 static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 {
 	struct devicetreeValue *value = NULL;
@@ -299,7 +313,6 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 					// Byte string
 					if (config->tempIndex == 0){
 						config->propertystate = dtpropByteString;
-						config->quoting = TRUE ;
 						if (!(value =_createValue(config, prop))){
 							return DT_RETURN_NOMEM;
 						}
@@ -334,6 +347,7 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 						}
 						config->state = dtconfigStateNode;
 					}
+					break;
 				case ':':
 					// Label
 					if (config->tempIndex > 0){
@@ -360,7 +374,21 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				}
 				config->tempIndex = 0;
 			}else{
-				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+				if(config->lastchar == '/'){
+					if (c == '/' || c == '*'){
+						if (c == '*'){
+							config->state = dtconfigStateCommentBlock;
+						}else if(c == '/'){
+							config->state = dtconfigStateComment;
+						}
+						config->commentstate = dtcommentVar;
+					}
+				}
+				if (config->state == dtconfigStateProperty){
+					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+				}else{
+					_popOutChar(config->temp, &config->tempIndex);
+				}
 			}
 			break;
 		case dtpropText:
@@ -388,7 +416,24 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				}
 				config->tempIndex = 0;
 			}else{
-				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+				if(config->lastchar == '/'){
+					if (c == '/' || c == '*'){
+						if (c == '*'){
+							config->state = dtconfigStateCommentBlock;
+						}else if(c == '/'){
+							config->state = dtconfigStateComment;
+						}
+						config->commentstate = dtcommentVar;
+					}
+				}
+				if (config->state == dtconfigStateProperty){
+					if (c != ' ' && c != '\t' && c != '\n' && c != '\r'){
+						// Only add chars which are not white space as these are ignored anyway
+						_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+					}
+				}else{
+					_popOutChar(config->temp, &config->tempIndex);
+				}
 			}
 			break;
 		default:
@@ -400,22 +445,34 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 
 static UWORD _parseComment(struct devicetreeConfig *config, char c, BOOL block)
 {
+	BOOL bExitComment = FALSE ;
+	
 	switch(c){
-		case '\r':
+		//case '\r':
 		case '\n':
 			if (!block){
-				config->state = dtconfigStateNode;
-				config->tempIndex = 0 ;
+				bExitComment = TRUE ;
 			}
+			break;
 		default:
 			if (block){
-				if (config->temp[0] == '*' && c == '/'){
-					config->state = dtconfigStateNode;
-					config->tempIndex = 0 ;
-				}else{
-					config->temp[0] = c;
+				if (config->lastchar == '*' && c == '/'){
+					bExitComment = TRUE ;
 				}
 			}
+	}
+	
+	if (bExitComment){
+		switch(config->commentstate){
+			case dtcommentVar:
+				config->state = dtconfigStateProperty;
+				// Property state should remain untouched as entered by the comment state
+				break;
+			case dtcommentNode:
+			default:
+				config->state = dtconfigStateNode;
+				config->propertystate = dtpropUnknown;
+		}
 	}
 	
 	return DT_RETURN_NOERROR;
@@ -445,12 +502,15 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 						// This is a comment or comment block
 						if (c == '*'){
 							config->state = dtconfigStateCommentBlock;
+							config->commentstate = dtcommentNode;
 						}else{
+							// this is a // comment
 							config->state = dtconfigStateComment;
+							config->commentstate = dtcommentNode;
 						}
 						break;
 					}
-					// Fall through * to be just another character for command name
+					// Fall through * or / to be just another character for command name
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 					break;
 				case ' ':
@@ -823,7 +883,7 @@ UWORD dtOpenBuffer(struct devicetreeConfig *config, UBYTE *buffer, ULONG len)
 
 UWORD dtParseConfig(struct devicetreeConfig *config, dt_object_callback fn_callback)
 {
-	char c;
+	char c='\0';
 	UWORD ret = DT_RETURN_NOERROR ;
 	LONG fret = 0;
 	BOOL commentBlock = FALSE ;
@@ -834,7 +894,7 @@ UWORD dtParseConfig(struct devicetreeConfig *config, dt_object_callback fn_callb
 	
 	for (;config->currentStream;config->currentStream = config->currentStream->prev){
 		for(;config->currentStream->offset < config->currentStream->streamLen;config->currentStream->offset++){
-			
+			config->lastchar = c;
 			// Read next character from file stream or memory buffer
 			if (config->currentStream->f){
 				if ((fret=Read(config->currentStream->f,&c,1)) != 1){
@@ -857,6 +917,7 @@ UWORD dtParseConfig(struct devicetreeConfig *config, dt_object_callback fn_callb
 			}
 		
 replay:
+			commentBlock = FALSE ;
 			switch(config->state){
 				case dtconfigStateNode:
 					ret = _parseNode(config,c);
@@ -889,40 +950,55 @@ replay:
 
 void dtClose(struct devicetreeConfig *config)
 {
+	void *freeMe; // Need to save this as freeing the var invalidates the change in linked list ref
 	struct devicetreeNode *dtslvl, *dtssib ;
 	struct devicetreeObject *dtsobjs;
 	struct devicetreeValue *dtsvals;
 	struct devicetreeProperty *dtsprop;
 	struct devicetreeStream *dtstream;
 	
-	for(dtslvl = getLastChildNode(&config->topNode);dtslvl;dtslvl=dtslvl->parent){
-		for(dtssib=getLastSiblingNode(dtslvl); dtssib; dtssib=dtssib->prev){
-			for(dtsobjs = getLastObject(dtssib); dtsobjs; dtsobjs=dtsobjs->prev){
+	for(dtslvl = getLastChildNode(&config->topNode);dtslvl;){
+		for(dtssib=getLastSiblingNode(dtslvl); dtssib;){
+			for(dtsobjs = getLastObject(dtssib); dtsobjs;){
 				if (dtsobjs->type == DT_OBJECT_PROPERTY){
 					dtsprop = (struct devicetreeProperty*)dtsobjs;
-					for(dtsvals = getLastValue(dtsprop); dtsvals; dtsvals=dtsvals->prev){
+					for(dtsvals = getLastValue(dtsprop); dtsvals;){
 						if (dtsvals->value && dtsvals->size >0){
 							FreeVec(dtsvals->value);
 						}
-						FreeVec(dtsvals);
+						freeMe = dtsvals;
+						dtsvals = dtsvals->prev;
+						FreeVec(freeMe);
 					}
 				}
-				
-				FreeVec(dtsobjs);
+				freeMe = dtsobjs;
+				dtsobjs = dtsobjs->prev;
+				FreeVec(freeMe);
 			}
-			FreeVec(dtssib);
+			freeMe = dtssib;
+			dtssib = dtssib->prev;
+			FreeVec(freeMe);
 		}
 		if (dtslvl != &config->topNode){
-			FreeVec(dtslvl);
+			freeMe = dtslvl;
+			if ((dtslvl = dtslvl->parent)){
+				dtslvl->child = NULL;
+			}
+			
+			FreeVec(freeMe);
+		}else{
+			dtslvl = NULL;
 		}
 	}
 	
-	for(dtstream=getLastStream(config);dtstream;dtstream=dtstream->prev){
+	for(dtstream=getLastStream(config);dtstream;){
 		if (dtstream->configOpened){
 			Close(dtstream->f);
 			dtstream->f = NULL;
 		}
-		FreeVec(dtstream);
+		freeMe = dtstream;
+		dtstream = dtstream->prev;
+		FreeVec(freeMe);
 	}
 	
 	CloseLibrary(config->dos);
