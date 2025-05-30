@@ -1156,6 +1156,7 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 	}
 	
 	do{
+		matchNode = FALSE;
 		dividerAt = _terminatePath(path);
 		// Look for node
 		for (;n && !matchNode;n=n->next){

@@ -29,53 +29,51 @@ void printNode(struct devicetreeNode *n1, UWORD indent)
 	struct devicetreeReference *ref;
 	
 	doIndent(indent);printf("[Node name: \"%s\", label: \"%s\", address: \"%s\"]\n", n1->name, n1->label, n1->unitAddress);
-	//if(n1->firstObject){
-		for(o = n1->firstObject; o; o=o->next){
-			if (o->type == DT_OBJECT_PROPERTY){
-				prop = (struct devicetreeProperty*)o;
-				doIndent(indent);printf("-Property label: \"%s\", name: \"%s\", values: ", prop->label, prop->name);
-				if (prop->values){
-					for(val=prop->values; val; val=val->next){
-						switch(val->type){
-							case DT_VALUE_ULONG_ARRAY:
-								printf("(tag array) ");
-								ulArray = (struct TagItem *)val->value;
-								for(i=0; i<val->size; i++){
-									if (ulArray[i].ti_Tag == DT_ENCODED_VALUE_REFERENCE){
-										ref = (struct devicetreeReference*)ulArray[i].ti_Data;
-										printf("<phandle:%d node:0x%p> ", ref->phandleRef, ref->node);
-									}else if (ulArray[i].ti_Tag == DT_ENCODED_VALUE_U32){	
-										printf("<u32:0x%04X> ", ulArray[i].ti_Data);
-									}
+	for(o = n1->firstObject; o; o=o->next){
+		if (o->type == DT_OBJECT_PROPERTY){
+			prop = (struct devicetreeProperty*)o;
+			doIndent(indent);printf("-Property label: \"%s\", name: \"%s\", values: ", prop->label, prop->name);
+			if (prop->values){
+				for(val=prop->values; val; val=val->next){
+					switch(val->type){
+						case DT_VALUE_ULONG_ARRAY:
+							printf("(tag array) ");
+							ulArray = (struct TagItem *)val->value;
+							for(i=0; i<val->size; i++){
+								if (ulArray[i].ti_Tag == DT_ENCODED_VALUE_REFERENCE){
+									ref = (struct devicetreeReference*)ulArray[i].ti_Data;
+									printf("<phandle:%d node:0x%p> ", ref->phandleRef, ref->node);
+								}else if (ulArray[i].ti_Tag == DT_ENCODED_VALUE_U32){	
+									printf("<u32:0x%04X> ", ulArray[i].ti_Data);
 								}
-								break;
-							case DT_VALUE_STRING:
-								printf("(string) %s ", (char*)val->value);
-								break;
-							case DT_VALUE_BYTE_STRING:
-								printf("(byte string) ") ;
-								bArray = (UBYTE*)val->value;
-								for(i=0; i<val->size; i++){
-									printf("%02X ", bArray[i]);
-								}
-								break;
-							case DT_VALUE_LOGIC:
-								printf("(logic) %s ", (char*)val->value);
-								break;
-							default:
-								printf("(unknown) ");
-						}
+							}
+							break;
+						case DT_VALUE_STRING:
+							printf("(string) %s ", (char*)val->value);
+							break;
+						case DT_VALUE_BYTE_STRING:
+							printf("(byte string) ") ;
+							bArray = (UBYTE*)val->value;
+							for(i=0; i<val->size; i++){
+								printf("%02X ", bArray[i]);
+							}
+							break;
+						case DT_VALUE_LOGIC:
+							printf("(logic) %s ", (char*)val->value);
+							break;
+						default:
+							printf("(unknown) ");
 					}
-					printf("\n");
-				}else{
-					printf("(no value)\n");
 				}
-			}else if (o->type == DT_OBJECT_COMMAND){
-				cmd = (struct devicetreeCommand*)o;
-				doIndent(indent);printf("-Command %s, value %s\n", cmd->name, cmd->value);
+				printf("\n");
+			}else{
+				printf("(no value)\n");
 			}
+		}else if (o->type == DT_OBJECT_COMMAND){
+			cmd = (struct devicetreeCommand*)o;
+			doIndent(indent);printf("-Command %s, value %s\n", cmd->name, cmd->value);
 		}
-	//}
+	}
 }
 
 void printDTS(struct devicetreeConfig *config)
