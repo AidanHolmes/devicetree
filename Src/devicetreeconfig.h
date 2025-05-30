@@ -69,6 +69,7 @@ struct devicetreeReference
 	struct devicetreeReference *prev;
 	char referenceName[DT_MAX_NODE_LABEL]; // Although node holds the label name this is needed when node not yet found and may be orphan ref
 	struct devicetreeNode *node;
+	BOOL phandleValid;
 	ULONG phandleRef;
 };
 

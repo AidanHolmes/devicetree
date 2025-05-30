@@ -25,43 +25,58 @@
 	}
 }
 
-static struct devicetreeReference* _getReference(struct devicetreeConfig *config, char *name, ULONG phandle, BOOL create_if_nonexist)
+static struct devicetreeReference* _getReference(struct devicetreeConfig *config, char *name, ULONG *phandle)
 {
-	struct devicetreeReference *r, *attachTo ;
+	// Searches by name or phandle or both if they are set. If name is empty or NULL then will not be used for search
+	// If no reference found then returns NULL.
+	struct devicetreeReference *r ;
 	
 	for	(r=config->refTop; r; r=r->next){
-		if (name){
+		if (name && name[0] != '\0'){
 			if (dtStriCmp(name, r->referenceName, DT_MAX_NODE_LABEL)){
 				return r; // found the node requested
 			}
-		}else{
+		}
+		if (phandle){
 			// no name given, so search by phandle value
-			if (phandle == r->phandleRef){
+			if (*phandle == r->phandleRef){
 				return r; // found node by phandle
 			}
 		}
 	}
+	
+	return r;
+}
 
-	// nothing found if here.
-	if (create_if_nonexist){ // should we create blank new entry if they don't exist in list?
-		r = AllocVec(sizeof(struct devicetreeReference), MEMF_ANY | MEMF_CLEAR);
-		if (r){
-			// Add ref name or phandle
-			if (name){
-				dtStrCpy(r->referenceName, name, DT_MAX_NODE_LABEL);
-			}else{
-				r->phandleRef = phandle;
-			}
-			if (!config->refTop){
-				config->refTop = r;
-			}else{
-				// Find last reference in linked list and add to end
-				for(attachTo=config->refTop; attachTo->next != NULL; attachTo=attachTo->next);
-				attachTo->next = r;
-				r->prev = attachTo ;
-			}
+static struct devicetreeReference* _createReference(struct devicetreeConfig *config, char *name, ULONG *phandle)
+{
+	// No duplicate check performed in this call. Use _getReference to find an existing record and only
+	// use this function if the reference doesn't exist.
+	struct devicetreeReference *r, *attachTo ;
+	
+	r = AllocVec(sizeof(struct devicetreeReference), MEMF_ANY | MEMF_CLEAR);
+	if (r){
+		// Add ref name if not null and not empty or add a phandle if no name
+		// Any entry by name is likely a forward reference and empty phandle, but could be a node with phandle property and label
+		if (name && name[0] != '\0'){
+			dtStrCpy(r->referenceName, name, DT_MAX_NODE_LABEL);
+		}
+		if (phandle){
+			// Set the phandle if specified in parameters
+			r->phandleRef = *phandle;
+			r->phandleValid = TRUE;
+		}
+		
+		if (!config->refTop){
+			config->refTop = r;
+		}else{
+			// Find last reference in linked list and add to end
+			for(attachTo=config->refTop; attachTo->next != NULL; attachTo=attachTo->next);
+			attachTo->next = r;
+			r->prev = attachTo ;
 		}
 	}
+
 	return r;
 }
 
@@ -242,20 +257,25 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 	return DT_RETURN_NOERROR;
 }
 
-static UWORD _handleKnownPropertyEncodedValue(struct devicetreeConfig *config, struct devicetreeProperty *property, UWORD index, UWORD val)
+static UWORD _handleKnownPropertyEncodedValue(struct devicetreeConfig *config, struct devicetreeProperty *property, UWORD index, ULONG val)
 {
 	struct devicetreeReference *ref=NULL;
-	
+
 	if (dtStriCmp(property->name, "phandle", DT_MAX_PROPERTY_NAME)){
 		if (index == 0){
-			// phandle first parameter is the reference ID
-			if (!(ref = _getReference(config, NULL, val, TRUE))){
-				return DT_RETURN_NOMEM;
+			if ((ref = _getReference(config, property->_obj.node->label, &val))){
+				if (ref->phandleValid && ref->phandleRef == val){
+					// Reference already exists.
+					return DT_RETURN_PARAM_ERROR;
+				}
 			}
-			// Set the reference label if the node has a label
-			if (property->_obj.node->label[0] != '\0'){
-				dtStrCpy(ref->referenceName, property->_obj.node->label, DT_MAX_NODE_LABEL);
+			if (!ref){ // Reference hasn't been created yet
+				if(!(ref = _createReference(config, property->_obj.node->label, &val))){
+					// no memory
+					return DT_RETURN_NOMEM;
+				}
 			}
+			
 			// Set the node in reference list
 			ref->node = property->_obj.node;
 		}
@@ -263,7 +283,7 @@ static UWORD _handleKnownPropertyEncodedValue(struct devicetreeConfig *config, s
 	return DT_RETURN_NOERROR;
 }
 
-static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetreeEncodedArrayValue *encval, UWORD index,  BOOL isRef, UWORD val, char *refName)
+static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetreeEncodedArrayValue *encval, UWORD index,  BOOL isRef, ULONG val, char *refName)
 {
 	struct devicetreeReference *ref=NULL;
 	struct devicetreeProperty *p=NULL;
@@ -272,17 +292,19 @@ static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetr
 	if (config->currentObject->type == DT_OBJECT_PROPERTY){
 		p = (struct devicetreeProperty*)config->currentObject ;
 	}
-	if ((ret=_handleKnownPropertyEncodedValue(config,p,index,val)) != DT_RETURN_NOERROR){
-		return ret ;
-	}
 	
 	if (isRef){
-		if (!(ref = _getReference(config, refName, 0, TRUE))){
-			return DT_RETURN_NOMEM;
+		if (!(ref = _getReference(config, refName, NULL))){
+			if (!(ref = _createReference(config, refName, NULL))){ // create forward reference
+				return DT_RETURN_NOMEM;
+			}
 		}
 		encval[index].flags = DT_ENCODED_VALUE_REFERENCE;
 		encval[index].value = (ULONG)ref;
 	}else{
+		if ((ret=_handleKnownPropertyEncodedValue(config,p,index,val)) != DT_RETURN_NOERROR){
+			return ret ;
+		}
 		encval[index].flags = DT_ENCODED_VALUE_U32;
 		encval[index].value = val;
 	}
