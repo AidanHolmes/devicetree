@@ -25,17 +25,95 @@
 	}
 }
 
-static struct devicetreeReference* _getReference(struct devicetreeConfig *config, char *name, ULONG *phandle)
+static UWORD _getNodePath(struct devicetreeNode *node, char *strPath, UWORD maxLength)
 {
-	// Searches by name or phandle or both if they are set. If name is empty or NULL then will not be used for search
+	// Paths can be long so they will be allocated in memory and returned via strPath
+	UWORD length = 0, i=0, templen = 0;
+	struct devicetreeNode *n;
+	char *p = NULL;
+	
+	// 2 passes to determine length and then write path
+	for (i=0;i<2;i++){
+		for (n=node;n->parent;n=n->parent){
+			if (!(n->name[0] == '/' && n->name[1] == '\0')){
+				if (n->unitAddress[0] != '\0'){
+					templen = strlen(n->unitAddress); 
+					if (i==1){
+						p -= templen +1;// add 1 for @
+						*p = '@';
+						memcpy(p+1, n->unitAddress, templen);
+					}
+					length += templen+1;
+				}
+				templen = strlen(n->name);
+				if (i==1){
+					p -= templen;
+					memcpy(p, n->name, templen);
+				}
+				length += templen;
+				
+				
+				if (i==1){
+					p -= 1;
+					*p = '/';
+				}
+				length += 1; // add for path separator
+			}
+		}
+		if (i==0){
+			if (length > maxLength-1){
+				return DT_RETURN_PARAM_ERROR;
+			}
+			p=strPath+length;
+			*p = '\0';
+		}
+	}
+
+	return DT_RETURN_NOERROR;
+}
+
+static struct devicetreeReference* _getReference(struct devicetreeConfig *config, char *name, char *path, ULONG *phandle)
+{
+	// Searches by name, path or phandle or any of these if they are set. If name or path is empty or NULL then will not be used for search
 	// If no reference found then returns NULL.
 	struct devicetreeReference *r ;
+	struct devicetreeNode *n;
+	char *p = NULL;
+	BOOL braces = FALSE;
 	
 	for	(r=config->refTop; r; r=r->next){
 		if (name && name[0] != '\0'){
 			if (dtStriCmp(name, r->referenceName, DT_MAX_NODE_LABEL)){
 				return r; // found the node requested
 			}
+			
+		}
+		if (path && path[0] != '\0'){
+			// If braces then skip first character and terminate at closing brace
+			if (path[0] == '{'){
+				for (p=path; *p; p++){
+					if (*p == '}'){
+						*p='\0';
+						path += 1;
+						braces = TRUE ;
+						break;
+					}
+				}
+			}
+			// Compare path string to cached path in reference list or get node
+			// from device tree and compare that node.
+			if (dtStriCmp(path, r->strPath, DT_MAX_REFERENCE)){
+				return r;
+			}
+			if ((n=getNode(config, path))){
+				if (r->node == n){
+					return r;
+				}
+			}
+			if (braces){
+				*p = '}';
+			}
+			
 		}
 		if (phandle){
 			// no name given, so search by phandle value
@@ -48,11 +126,13 @@ static struct devicetreeReference* _getReference(struct devicetreeConfig *config
 	return r;
 }
 
-static struct devicetreeReference* _createReference(struct devicetreeConfig *config, char *name, ULONG *phandle)
+static struct devicetreeReference* _createReference(struct devicetreeConfig *config, char *name, char *path, ULONG *phandle)
 {
 	// No duplicate check performed in this call. Use _getReference to find an existing record and only
 	// use this function if the reference doesn't exist.
 	struct devicetreeReference *r, *attachTo ;
+	char *p = NULL;
+	BOOL braces = FALSE ;
 	
 	r = AllocVec(sizeof(struct devicetreeReference), MEMF_ANY | MEMF_CLEAR);
 	if (r){
@@ -60,6 +140,26 @@ static struct devicetreeReference* _createReference(struct devicetreeConfig *con
 		// Any entry by name is likely a forward reference and empty phandle, but could be a node with phandle property and label
 		if (name && name[0] != '\0'){
 			dtStrCpy(r->referenceName, name, DT_MAX_NODE_LABEL);
+		}
+		if (path && path[0] != '\0'){
+			// If braces then skip first character and terminate at closing brace
+			if (path[0] == '{'){
+				for (p=path; *p; p++){
+					if (*p == '}'){
+						*p='\0';
+						path += 1;
+						braces = TRUE ;
+						break;
+					}
+				}
+			}
+			// Copy path to reference
+			dtStrCpy(r->strPath, path, DT_MAX_REFERENCE);
+			r->node=getNode(config, path); // could be null if forward ref
+			if (braces){
+				*p = '}';
+			}
+			
 		}
 		if (phandle){
 			// Set the phandle if specified in parameters
@@ -259,25 +359,46 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 
 static UWORD _handleKnownPropertyEncodedValue(struct devicetreeConfig *config, struct devicetreeProperty *property, UWORD index, ULONG val)
 {
-	struct devicetreeReference *ref=NULL;
+	struct devicetreeReference *ref=NULL, *ref2=NULL;
+	char path[DT_MAX_REFERENCE] ;
 
+	path[0] = '\0';
+	
 	if (dtStriCmp(property->name, "phandle", DT_MAX_PROPERTY_NAME)){
 		if (index == 0){
-			if ((ref = _getReference(config, property->_obj.node->label, &val))){
+			_getNodePath(property->_obj.node, path, DT_MAX_REFERENCE);
+			if ((ref = _getReference(config, property->_obj.node->label, path, &val))){
 				if (ref->phandleValid && ref->phandleRef == val){
 					// Reference already exists.
 					return DT_RETURN_PARAM_ERROR;
 				}
 			}
 			if (!ref){ // Reference hasn't been created yet
-				if(!(ref = _createReference(config, property->_obj.node->label, &val))){
+				if(!(ref = _createReference(config, property->_obj.node->label, path, &val))){
 					// no memory
 					return DT_RETURN_NOMEM;
 				}
 			}
 			
 			// Set the node in reference list
+			ref->phandleValid = TRUE ;
+			ref->phandleRef = val ;
 			ref->node = property->_obj.node;
+			if (path[0]){
+				// If we have a 2nd forward copy with the path reference then populate again - this is quite stupid
+				if ((ref2 = _getReference(config, NULL, path, NULL))){
+					if (ref != ref2){
+						if (!ref2->node){
+							ref2->node = ref->node;
+						}
+						if (!ref2->phandleValid){
+							ref2->phandleValid = ref->phandleValid;
+							ref2->phandleRef = ref->phandleRef;
+						}
+					}
+				}
+				dtStrCpy(ref->strPath, path, DT_MAX_REFERENCE);
+			}
 		}
 	}
 	return DT_RETURN_NOERROR;
@@ -288,14 +409,23 @@ static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetr
 	struct devicetreeReference *ref=NULL;
 	struct devicetreeProperty *p=NULL;
 	UWORD ret = 0;
+	char *path = NULL; 
 	
+	// Convert to property object
 	if (config->currentObject->type == DT_OBJECT_PROPERTY){
 		p = (struct devicetreeProperty*)config->currentObject ;
+	}else{
+		return DT_RETURN_PARAM_ERROR;
 	}
 	
 	if (isRef){
-		if (!(ref = _getReference(config, refName, NULL))){
-			if (!(ref = _createReference(config, refName, NULL))){ // create forward reference
+		// Not a value, but a reference to a node
+		if (refName[0] == '{'){
+			path = refName;
+			refName = NULL;
+		}
+		if (!(ref = _getReference(config, refName, path, NULL))){
+			if (!(ref = _createReference(config, refName, path, NULL))){ // create forward reference
 				return DT_RETURN_NOMEM;
 			}
 		}
@@ -314,7 +444,7 @@ static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetr
 
 static UWORD _strToArray(struct devicetreeConfig *config, char *str, struct devicetreeValue *value)
 {
-	char *p = NULL, tempRef[DT_MAX_NODE_LABEL];
+	char *p = NULL, tempRef[DT_MAX_REFERENCE];
 	BOOL readingValue = FALSE, isHex = FALSE, readingRef = FALSE;
 	ULONG val = 0;
 	struct devicetreeEncodedArrayValue *array = NULL;

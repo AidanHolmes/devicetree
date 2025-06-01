@@ -13,6 +13,7 @@
 #define DT_MAX_COMMAND_VALUE   	50
 //#define DT_MAX_TEMP_STR 		DT_MAX_NODE_NAME + DT_MAX_NODE_ADDRESS + 2
 #define DT_MAX_TEMP_STR			300
+#define DT_MAX_REFERENCE		300
 
 #define DT_OBJECT_PROPERTY	 	1
 #define DT_OBJECT_COMMAND		2
@@ -32,7 +33,6 @@
 
 #define DT_ENCODED_VALUE_U32		TAG_USER+0
 #define DT_ENCODED_VALUE_REFERENCE 	TAG_USER+1
-
 
 struct devicetreeObject;
 struct devicetreeValue;
@@ -67,6 +67,7 @@ struct devicetreeReference
 {
 	struct devicetreeReference *next;
 	struct devicetreeReference *prev;
+	char strPath[DT_MAX_REFERENCE];
 	char referenceName[DT_MAX_NODE_LABEL]; // Although node holds the label name this is needed when node not yet found and may be orphan ref
 	struct devicetreeNode *node;
 	BOOL phandleValid;

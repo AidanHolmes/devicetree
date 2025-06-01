@@ -32,7 +32,7 @@
 			reg = <0xD80001 0x10>;
 			inlinecomment = <0x11 0x00002345 /* Comment */ 0xFF 99>;
 			
-			interrupts = <&amiga>;
+			interrupts = <&amiga &{/gayle/sbc@1200}>;
 		};
 		
 		cp-314: clockport-device@d88001 {
@@ -42,10 +42,10 @@
 			multiline = <0x00 0x00 0x00 0x00 0x00 /* stuff */
 			             0x01 0x02 0x0004 0x0005 0x06>; /* and nonsense */
 						 
-			interrupts = <10 0x44 &amiga>;
+			interrupts = <10 0x44 &{/gayle}>;
 		};
 		
-		inthander: sbc{
+		inthander: sbc@1200{
 			phandle = <1>;
 		};
 		
