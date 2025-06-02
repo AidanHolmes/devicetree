@@ -104,7 +104,7 @@ struct devicetreeNode{
 typedef UWORD (*dt_object_callback)(struct devicetreeObject *obj) ;
 
 enum enConfigState {dtconfigStateNode, dtconfigStateProperty, dtconfigStateCommand, dtconfigStateComment, dtconfigStateCommentBlock};
-enum enPropertyState {dtpropUnknown, dtpropLogic, dtpropArray, dtpropByteString, dtpropText};
+enum enPropertyState {dtpropUnknown, dtpropLogic, dtpropArray, dtpropByteString, dtpropText, dtpropReference};
 enum enCommentState {dtcommentNode, dtcommentVar};
 enum enCommandState {dtcmdName, dtcmdValue};
 

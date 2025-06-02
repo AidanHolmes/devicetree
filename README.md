@@ -14,13 +14,14 @@ Some info to note on implementation:
 * Multiline byte arrays and property arrays with comments supported within values 
 * Strings interpreted on single lines within quotes
 * Property arrays and arrays of u32 values are stored in arrays of Tag Items to handle values which are references
-* Strings are straight-forward char arrays
+* Strings are char arrays
 * Implementation has a top level node to contain root node, properties and directives/commands
 * /Include/ directives/commands can be in any node and will load additional file data
 * /Include/ files can be called anything. No checks on extensions. This also applies to main DTS file.
 * A node with a phandle doesn't need to be defined before it is used in the DTS. The parser will bind references later. Note that missing references could be left hanging (NULL).
+* Mixing path and alias/label references, ahead of the actual node with phandle, will create 2 references in memory. Note that both are maintained, but returned ref addresses are different
 * Pretty dumb with regards to known property types. Only phandle processed to record a reference
-* No formatting checks (see above as parser dumb to known properties) so a value can be anything
+* No formatting checks (see above as parser dumb to known properties) so a value can be set to anything in a property
 * No checking for /dts-v1/ directive. Can be added to DTS and it will be stored for processing. User can decide to enforce or check for it.
 * Parser doesn't treat unrecognised directives/commands as an error. Will continue processing.
 * In general the parser isn't very strict and will try to read data as much as possible until it really can't go further. This may create odd results if DTS is not well formatted.
@@ -31,10 +32,9 @@ Some info to note on implementation:
 * Deletion of node (are recorded against node but no action taken)
 * Arithmetic, bitwise or logical expressions in property values (literal string saved as property value but not processed, parser fails if in values)
 * Max 300 chars for any parsed parameter (changeable in code)
-* Aliases expanding to paths (saved as undefined strings),
+* Aliases expanding to paths (saved as undefined strings)
 * Labels within values (limited purpose and seems useless as not referenced)
-* References with paths e.g. < &{/soc/interrupt-controller@40000} > are not supported. This will be just parsed as a reference name
-* Expansion of references to full paths are not supported. Saved as unknown value so could still be looked up by client.
+* Expansion of references to full paths are not supported. Saved as unknown value so could still be looked up by client.-
 
 Custom DTS capabilities outside of 0.4:--
 * MACROS are not implemented (no #define, #ifdef, #else, etc)

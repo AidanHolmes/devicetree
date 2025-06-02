@@ -536,6 +536,7 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 {
 	struct devicetreeValue *value = NULL;
 	struct devicetreeProperty *prop = NULL;
+	struct devicetreeReference *r = NULL;
 	UWORD ret ;
 	
 	prop = (struct devicetreeProperty*)config->currentObject;
@@ -574,6 +575,17 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 							return DT_RETURN_NOMEM;
 						}
 						value->type = DT_VALUE_BYTE_STRING;
+						config->currentValue = value ;
+					}
+					break;
+				case '&':
+					// Reference to label
+					if (config->tempIndex == 0){ // check if text already added and if not then is a reference
+						config->propertystate = dtpropReference;
+						if (!(value =_createValue(config, prop))){
+							return DT_RETURN_NOMEM;
+						}
+						value->type = DT_VALUE_ULONG_ARRAY; // reference in ULONG tag array
 						config->currentValue = value ;
 					}
 					break;
@@ -660,6 +672,31 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				dtStrCpy(config->currentValue->value, config->temp, config->currentValue->size);
 				
 				config->tempIndex = 0;
+			}else{
+				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+			}
+			break;
+		case dtpropReference:
+			if (c == ' ' || c == '\t' || c== ';' || c == '\n' || c == '\r'){
+				if(config->tempIndex > 0){
+					if (!(r=_getReference(config, config->temp, NULL, NULL))){
+						if(!(r = _createReference(config, config->temp, NULL, NULL))){
+							return DT_RETURN_NOMEM;
+						}
+					}else if(r->node && !r->strPath[0]){
+						// Add node path if not set
+						_getNodePath(r->node, r->strPath, DT_MAX_REFERENCE);
+					}
+					config->currentValue->value = AllocVec(sizeof(struct devicetreeEncodedArrayValue)*2, MEMF_ANY | MEMF_CLEAR);
+					if (!config->currentValue->value){
+						return DT_RETURN_NOMEM;
+					}
+					config->currentValue->size = 2;
+					((struct devicetreeEncodedArrayValue*)config->currentValue->value)[0].flags = DT_ENCODED_VALUE_REFERENCE;
+					((struct devicetreeEncodedArrayValue*)config->currentValue->value)[0].value = (ULONG)r;
+					config->tempIndex = 0;
+				}
+				config->propertystate = dtpropUnknown;
 			}else{
 				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 			}
@@ -782,20 +819,16 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 			break;
 		case dtcmdValue:
 			switch(c){
+				case '\r':
+				case '\n':
+					break;
 				case '"':
 					if (config->quoting){
 						config->quoting = FALSE;
 					}else{
 						config->quoting = TRUE;
+						break;
 					}
-					break;
-				case '\r':
-				case '\n':
-					// Not valid exit condition. 
-					//return DT_RETURN_PARAM_ERROR; // no semi colon at end of line
-					break;
-				case ' ':
-				case '\t':
 				case ';':
 					if (!config->quoting){
 						if (config->tempIndex > 0){
@@ -820,6 +853,11 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 						break;
 					}
 					// else fall through
+				case ' ':
+				case '\t':
+					if (config->tempIndex == 0){
+						break;
+					}
 				default:
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 			}

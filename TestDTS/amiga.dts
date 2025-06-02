@@ -9,7 +9,13 @@
 	Labels are supported for nodes and properties. Don't use in values. 
 */
 
+/memreserve/ 0x10000000 0x4000;
+
 / {
+	aliases {
+		ethernet0 = &picowyfy;
+	};
+	
 	amiga: gayle{
 		phandle = <59>;
 		compatible = "simple-bus";
@@ -28,6 +34,7 @@
 		
 		picowyfy: clockport-device@d84001 {
 			compatible = "clockport-wifi";
+			phandle = <3>;
 			model = "rpi,picowyfy-v1";
 			reg = <0xD80001 0x10>;
 			inlinecomment = <0x11 0x00002345 /* Comment */ 0xFF 99>;
