@@ -8,6 +8,178 @@
 
 #define DOSBase config->dos
 
+/*inline*/ static void _pushInChar(char *str, char c, UWORD *index, ULONG max)
+{
+	if (*index < max-1){
+		str[*index] = c;
+		*index +=1;
+		str[*index] = '\0'; // ensure terminated
+	}
+}
+
+/*inline*/ static void _popOutChar(char *str, UWORD *index)
+{
+	if (*index > 0){
+		*index -= 1;
+		str[*index] = '\0';
+	}
+}
+
+static UWORD _getNodePath(struct devicetreeNode *node, char *strPath, UWORD maxLength)
+{
+	// Paths can be long so they will be allocated in memory and returned via strPath
+	UWORD length = 0, i=0, templen = 0;
+	struct devicetreeNode *n;
+	char *p = NULL;
+	
+	// 2 passes to determine length and then write path
+	for (i=0;i<2;i++){
+		for (n=node;n->parent;n=n->parent){
+			if (!(n->name[0] == '/' && n->name[1] == '\0')){
+				if (n->unitAddress[0] != '\0'){
+					templen = strlen(n->unitAddress); 
+					if (i==1){
+						p -= templen +1;// add 1 for @
+						*p = '@';
+						memcpy(p+1, n->unitAddress, templen);
+					}
+					length += templen+1;
+				}
+				templen = strlen(n->name);
+				if (i==1){
+					p -= templen;
+					memcpy(p, n->name, templen);
+				}
+				length += templen;
+				
+				
+				if (i==1){
+					p -= 1;
+					*p = '/';
+				}
+				length += 1; // add for path separator
+			}
+		}
+		if (i==0){
+			if (length > maxLength-1){
+				return DT_RETURN_PARAM_ERROR;
+			}
+			p=strPath+length;
+			*p = '\0';
+		}
+	}
+
+	return DT_RETURN_NOERROR;
+}
+
+static struct devicetreeReference* _getReference(struct devicetreeConfig *config, char *name, char *path, ULONG *phandle)
+{
+	// Searches by name, path or phandle or any of these if they are set. If name or path is empty or NULL then will not be used for search
+	// If no reference found then returns NULL.
+	struct devicetreeReference *r ;
+	struct devicetreeNode *n;
+	char *p = NULL;
+	BOOL braces = FALSE;
+	
+	for	(r=config->refTop; r; r=r->next){
+		if (name && name[0] != '\0'){
+			if (dtStriCmp(name, r->referenceName, DT_MAX_NODE_LABEL)){
+				return r; // found the node requested
+			}
+			
+		}
+		if (path && path[0] != '\0'){
+			// If braces then skip first character and terminate at closing brace
+			if (path[0] == '{'){
+				for (p=path; *p; p++){
+					if (*p == '}'){
+						*p='\0';
+						path += 1;
+						braces = TRUE ;
+						break;
+					}
+				}
+			}
+			// Compare path string to cached path in reference list or get node
+			// from device tree and compare that node.
+			if (dtStriCmp(path, r->strPath, DT_MAX_REFERENCE)){
+				return r;
+			}
+			if ((n=getNode(config, path))){
+				if (r->node == n){
+					return r;
+				}
+			}
+			if (braces){
+				*p = '}';
+			}
+			
+		}
+		if (phandle){
+			// no name given, so search by phandle value
+			if (*phandle == r->phandleRef){
+				return r; // found node by phandle
+			}
+		}
+	}
+	
+	return r;
+}
+
+static struct devicetreeReference* _createReference(struct devicetreeConfig *config, char *name, char *path, ULONG *phandle)
+{
+	// No duplicate check performed in this call. Use _getReference to find an existing record and only
+	// use this function if the reference doesn't exist.
+	struct devicetreeReference *r, *attachTo ;
+	char *p = NULL;
+	BOOL braces = FALSE ;
+	
+	r = AllocVec(sizeof(struct devicetreeReference), MEMF_ANY | MEMF_CLEAR);
+	if (r){
+		// Add ref name if not null and not empty or add a phandle if no name
+		// Any entry by name is likely a forward reference and empty phandle, but could be a node with phandle property and label
+		if (name && name[0] != '\0'){
+			dtStrCpy(r->referenceName, name, DT_MAX_NODE_LABEL);
+		}
+		if (path && path[0] != '\0'){
+			// If braces then skip first character and terminate at closing brace
+			if (path[0] == '{'){
+				for (p=path; *p; p++){
+					if (*p == '}'){
+						*p='\0';
+						path += 1;
+						braces = TRUE ;
+						break;
+					}
+				}
+			}
+			// Copy path to reference
+			dtStrCpy(r->strPath, path, DT_MAX_REFERENCE);
+			r->node=getNode(config, path); // could be null if forward ref
+			if (braces){
+				*p = '}';
+			}
+			
+		}
+		if (phandle){
+			// Set the phandle if specified in parameters
+			r->phandleRef = *phandle;
+			r->phandleValid = TRUE;
+		}
+		
+		if (!config->refTop){
+			config->refTop = r;
+		}else{
+			// Find last reference in linked list and add to end
+			for(attachTo=config->refTop; attachTo->next != NULL; attachTo=attachTo->next);
+			attachTo->next = r;
+			r->prev = attachTo ;
+		}
+	}
+
+	return r;
+}
+
 static struct devicetreeStream* _addStream(struct devicetreeConfig *config)
 {
 	struct devicetreeStream *p = NULL, *attachTo = NULL;
@@ -26,11 +198,49 @@ static struct devicetreeStream* _addStream(struct devicetreeConfig *config)
 	}
 	return p;
 }
+static void _deletePropertyValues(struct devicetreeProperty *property)
+{
+	struct devicetreeValue *dtsvals, *freeMe;
+	
+	for(dtsvals = getLastValue(property); dtsvals;){
+		if (dtsvals->value && dtsvals->size >0){
+			FreeVec(dtsvals->value);
+		}
+		freeMe = dtsvals;
+		dtsvals = dtsvals->prev;
+		FreeVec(freeMe);
+	}
+	property->values = NULL;
+}
+
+static void _deleteProperty(struct devicetreeProperty *property)
+{
+	struct devicetreeObject *o ;
+	
+	_deletePropertyValues(property);
+	
+	o=(struct devicetreeObject*)property;
+	
+	if (o->node){
+		if (o->node->firstObject == o){
+			o->node->firstObject = o->next ;
+		}
+	}
+	if (o->next){
+		o->next->prev = o->prev;
+	}
+	if (o->prev){
+		o->prev->next = o->next;
+	}
+	
+	FreeVec(property);
+}
 
 static UWORD _handleCommand(struct devicetreeConfig *config, struct devicetreeCommand *cmd)
 {
 	UWORD ret ;
 	BPTR f;
+	struct devicetreeProperty* property ;
 
 	if (dtStriCmp("include", cmd->name, DT_MAX_COMMAND_VALUE)){
 		if(!(f = Open(cmd->value, MODE_OLDFILE))){
@@ -41,6 +251,10 @@ static UWORD _handleCommand(struct devicetreeConfig *config, struct devicetreeCo
 		}
 		config->currentStream->configOpened = TRUE ; // This was opened automatically. Needs closing by this code
 		
+	}else if (dtStriCmp("delete-property", cmd->name, DT_MAX_COMMAND_VALUE)){
+		if ((property=getProperty(config, config->currentNode, cmd->value))){
+			_deleteProperty(property);
+		}
 	}
 	return DT_RETURN_NOERROR;
 }
@@ -143,6 +357,8 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 			switch(*p){
 				case ' ':
 				case '\t':
+				case '\r':
+				case '\n':
 					break;
 				default:
 					if (*p >= 'A' && *p <= 'F'){
@@ -159,6 +375,7 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 					if (multi){
 						if (run == 1){
 							array[elements] = val ;
+							val = 0;
 						}
 						elements++;
 						multi = 0;
@@ -182,89 +399,186 @@ static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 	return DT_RETURN_NOERROR;
 }
 
-static UWORD _strToArray(char *str, struct devicetreeValue *value)
+static UWORD _handleKnownPropertyEncodedValue(struct devicetreeConfig *config, struct devicetreeProperty *property, UWORD index, ULONG val)
 {
-	char *p = NULL;
-	BOOL readingNumber = FALSE, isHex = FALSE;
-	ULONG val = 0, *array = NULL;
-	UWORD elements = 0, run = 0;
+	struct devicetreeReference *ref=NULL, *ref2=NULL;
+	char path[DT_MAX_REFERENCE] ;
+
+	path[0] = '\0';
+	
+	if (dtStriCmp(property->name, "phandle", DT_MAX_PROPERTY_NAME)){
+		if (index == 0){
+			_getNodePath(property->_obj.node, path, DT_MAX_REFERENCE);
+			if ((ref = _getReference(config, property->_obj.node->label, path, &val))){
+				if (ref->phandleValid && ref->phandleRef == val){
+					// Reference already exists.
+					return DT_RETURN_PARAM_ERROR;
+				}
+			}
+			if (!ref){ // Reference hasn't been created yet
+				if(!(ref = _createReference(config, property->_obj.node->label, path, &val))){
+					// no memory
+					return DT_RETURN_NOMEM;
+				}
+			}
+			
+			// Set the node in reference list
+			ref->phandleValid = TRUE ;
+			ref->phandleRef = val ;
+			ref->node = property->_obj.node;
+			if (path[0]){
+				// If we have a 2nd forward copy with the path reference then populate again - this is quite stupid
+				if ((ref2 = _getReference(config, NULL, path, NULL))){
+					if (ref != ref2){
+						if (!ref2->node){
+							ref2->node = ref->node;
+						}
+						if (!ref2->phandleValid){
+							ref2->phandleValid = ref->phandleValid;
+							ref2->phandleRef = ref->phandleRef;
+						}
+					}
+				}
+				dtStrCpy(ref->strPath, path, DT_MAX_REFERENCE);
+			}
+		}
+	}
+	return DT_RETURN_NOERROR;
+}
+
+static UWORD _addToEncodedArray(struct devicetreeConfig *config, struct devicetreeEncodedArrayValue *encval, UWORD index,  BOOL isRef, ULONG val, char *refName)
+{
+	struct devicetreeReference *ref=NULL;
+	struct devicetreeProperty *p=NULL;
+	UWORD ret = 0;
+	char *path = NULL; 
+	
+	// Convert to property object
+	if (config->currentObject->type == DT_OBJECT_PROPERTY){
+		p = (struct devicetreeProperty*)config->currentObject ;
+	}else{
+		return DT_RETURN_PARAM_ERROR;
+	}
+	
+	if (isRef){
+		// Not a value, but a reference to a node
+		if (refName[0] == '{'){
+			path = refName;
+			refName = NULL;
+		}
+		if (!(ref = _getReference(config, refName, path, NULL))){
+			if (!(ref = _createReference(config, refName, path, NULL))){ // create forward reference
+				return DT_RETURN_NOMEM;
+			}
+		}
+		encval[index].flags = DT_ENCODED_VALUE_REFERENCE;
+		encval[index].value = (ULONG)ref;
+	}else{
+		if ((ret=_handleKnownPropertyEncodedValue(config,p,index,val)) != DT_RETURN_NOERROR){
+			return ret ;
+		}
+		encval[index].flags = DT_ENCODED_VALUE_U32;
+		encval[index].value = val;
+	}
+	
+	return DT_RETURN_NOERROR;
+}
+
+static UWORD _strToArray(struct devicetreeConfig *config, char *str, struct devicetreeValue *value)
+{
+	char *p = NULL, tempRef[DT_MAX_REFERENCE];
+	BOOL readingValue = FALSE, isHex = FALSE, readingRef = FALSE;
+	ULONG val = 0;
+	struct devicetreeEncodedArrayValue *array = NULL;
+	UWORD elements = 0, run = 0, tempRefIndex = 0, ret=0;
 	
 	for (run = 0; run < 2; run++){
 		elements = 0 ;
-		readingNumber = FALSE ;
+		readingValue = FALSE ;
+		readingRef = FALSE ;
 		isHex = FALSE ;
 		val =0;
 		for (p=str; *p; p++){
 			switch(*p){
+				case '\r':
+					break;
+				case '\n':
 				case ' ':
 				case '\t':
-					if (readingNumber){
+					if (readingValue){
 						if (run == 1){
-							array[elements] = val ;
+							if ((ret=_addToEncodedArray(config, array, elements, readingRef, val, tempRef)) != DT_RETURN_NOERROR){
+								return ret ;
+							}
 						}
 						elements++ ;
-						readingNumber = FALSE ;
+						readingValue = FALSE ;
+						readingRef = FALSE ;
 					}
 					val = 0;
 					isHex = FALSE ;
 					break;
+				case '&':
+					// reference
+					readingRef = TRUE ;
+					tempRefIndex = 0;
+					break;
 				default:
-					readingNumber = TRUE ;
-					if (*p >= 'A' && *p <= 'F'){
-						*p += 32; // convert to lower
-					}
-					if (*p >= '0' && *p <= '9'){
-						if (isHex){
-							val = (val * 16) + *p-48;
-						}else{
-							val = (val * 10) + *p-48;
-						}
-					}else if ((*p >= 'a' && *p <= 'f') && isHex){
-						val = (val * 16) + *p-87;
+					readingValue = TRUE ;
+					if (readingRef){
+						_pushInChar(tempRef, *p, &tempRefIndex, DT_MAX_NODE_LABEL);
 					}else{
-						if ((*p == 'x' || *p == 'X') && p != str && *(p-1) == '0'){
-							isHex = TRUE ;
+						if (*p >= 'A' && *p <= 'F'){
+							*p += 32; // convert to lower
+						}
+						if (*p >= '0' && *p <= '9'){
+							if (isHex){
+								val = (val * 16) + *p-48;
+							}else{
+								val = (val * 10) + *p-48;
+							}
+						}else if ((*p >= 'a' && *p <= 'f') && isHex){
+							val = (val * 16) + *p-87;
 						}else{
-							// unexpected char in stream
-							return DT_RETURN_PARAM_ERROR;
+							if ((*p == 'x' || *p == 'X') && p != str && *(p-1) == '0'){
+								isHex = TRUE ;
+							}else{
+								// unexpected char in stream
+								return DT_RETURN_PARAM_ERROR;
+							}
 						}
 					}
 			}
 		}
-		if (readingNumber){
+		if (readingValue){
 			if (run == 1){
-				array[elements] = val ;
+				if ((ret=_addToEncodedArray(config, array, elements,readingRef, val, tempRef)) != DT_RETURN_NOERROR){
+					return ret ;
+				}
 			}
 			elements++ ;
 		}
 		
 		if (run == 0){
-			value->size = elements;
-			array = (ULONG*)AllocVec(value->size * 4, MEMF_ANY | MEMF_CLEAR);
+			value->size = elements+1;
+			array = (struct devicetreeEncodedArrayValue*)AllocVec(value->size * sizeof(struct devicetreeEncodedArrayValue), MEMF_ANY | MEMF_CLEAR);
 			if (!array){
 				value->size = 0;
-				return DT_RETURN_NOERROR;
+				return DT_RETURN_NOMEM;
 			}
 			value->value = array ;
+			array[elements].flags = TAG_END;
 		}
 	}
 	
 	return DT_RETURN_NOERROR;
 }
 
-/*inline*/ static void _pushInChar(char *str, char c, UWORD *index, ULONG max)
-{
-	if (*index < max-1){
-		str[*index] = c;
-		*index +=1;
-		str[*index] = '\0'; // ensure terminated
-	}
-}
-
 static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 {
 	struct devicetreeValue *value = NULL;
 	struct devicetreeProperty *prop = NULL;
+	struct devicetreeReference *r = NULL;
 	UWORD ret ;
 	
 	prop = (struct devicetreeProperty*)config->currentObject;
@@ -299,11 +613,21 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 					// Byte string
 					if (config->tempIndex == 0){
 						config->propertystate = dtpropByteString;
-						config->quoting = TRUE ;
 						if (!(value =_createValue(config, prop))){
 							return DT_RETURN_NOMEM;
 						}
 						value->type = DT_VALUE_BYTE_STRING;
+						config->currentValue = value ;
+					}
+					break;
+				case '&':
+					// Reference to label
+					if (config->tempIndex == 0){ // check if text already added and if not then is a reference
+						config->propertystate = dtpropReference;
+						if (!(value =_createValue(config, prop))){
+							return DT_RETURN_NOMEM;
+						}
+						value->type = DT_VALUE_ULONG_ARRAY; // reference in ULONG tag array
 						config->currentValue = value ;
 					}
 					break;
@@ -334,6 +658,7 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 						}
 						config->state = dtconfigStateNode;
 					}
+					break;
 				case ':':
 					// Label
 					if (config->tempIndex > 0){
@@ -355,12 +680,26 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 			if (c == '>'){
 				config->propertystate = dtpropUnknown;
 			
-				if ((ret=_strToArray(config->temp, config->currentValue)) != DT_RETURN_NOERROR){
+				if ((ret=_strToArray(config, config->temp, config->currentValue)) != DT_RETURN_NOERROR){
 					return ret;
 				}
 				config->tempIndex = 0;
 			}else{
-				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+				if(config->lastchar == '/'){
+					if (c == '/' || c == '*'){
+						if (c == '*'){
+							config->state = dtconfigStateCommentBlock;
+						}else if(c == '/'){
+							config->state = dtconfigStateComment;
+						}
+						config->commentstate = dtcommentVar;
+					}
+				}
+				if (config->state == dtconfigStateProperty){
+					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+				}else{
+					_popOutChar(config->temp, &config->tempIndex);
+				}
 			}
 			break;
 		case dtpropText:
@@ -379,6 +718,32 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 			}
 			break;
+		case dtpropReference:
+			if (c == ' ' || c == '\t' || c== ';' || c == '\n' || c == '\r'){
+				if(config->tempIndex > 0){
+					if (!(r=_getReference(config, config->temp, NULL, NULL))){
+						if(!(r = _createReference(config, config->temp, NULL, NULL))){
+							return DT_RETURN_NOMEM;
+						}
+					}else if(r->node && !r->strPath[0]){
+						// Add node path if not set
+						_getNodePath(r->node, r->strPath, DT_MAX_REFERENCE);
+					}
+					config->currentValue->value = AllocVec(sizeof(struct devicetreeEncodedArrayValue)*2, MEMF_ANY | MEMF_CLEAR);
+					if (!config->currentValue->value){
+						return DT_RETURN_NOMEM;
+					}
+					config->currentValue->size = 2;
+					((struct devicetreeEncodedArrayValue*)config->currentValue->value)[0].flags = DT_ENCODED_VALUE_REFERENCE;
+					((struct devicetreeEncodedArrayValue*)config->currentValue->value)[0].value = (ULONG)r;
+					config->tempIndex = 0;
+				}
+				config->propertystate = dtpropUnknown;
+				return DT_RETURN_REPLAY; // Re-run the last char into the parser
+			}else{
+				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+			}
+			break;
 		case dtpropByteString:
 			if (c == ']'){
 				config->propertystate = dtpropUnknown;
@@ -388,7 +753,24 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				}
 				config->tempIndex = 0;
 			}else{
-				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+				if(config->lastchar == '/'){
+					if (c == '/' || c == '*'){
+						if (c == '*'){
+							config->state = dtconfigStateCommentBlock;
+						}else if(c == '/'){
+							config->state = dtconfigStateComment;
+						}
+						config->commentstate = dtcommentVar;
+					}
+				}
+				if (config->state == dtconfigStateProperty){
+					if (c != ' ' && c != '\t' && c != '\n' && c != '\r'){
+						// Only add chars which are not white space as these are ignored anyway
+						_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+					}
+				}else{
+					_popOutChar(config->temp, &config->tempIndex);
+				}
 			}
 			break;
 		default:
@@ -400,22 +782,34 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 
 static UWORD _parseComment(struct devicetreeConfig *config, char c, BOOL block)
 {
+	BOOL bExitComment = FALSE ;
+	
 	switch(c){
-		case '\r':
+		//case '\r':
 		case '\n':
 			if (!block){
-				config->state = dtconfigStateNode;
-				config->tempIndex = 0 ;
+				bExitComment = TRUE ;
 			}
+			break;
 		default:
 			if (block){
-				if (config->temp[0] == '*' && c == '/'){
-					config->state = dtconfigStateNode;
-					config->tempIndex = 0 ;
-				}else{
-					config->temp[0] = c;
+				if (config->lastchar == '*' && c == '/'){
+					bExitComment = TRUE ;
 				}
 			}
+	}
+	
+	if (bExitComment){
+		switch(config->commentstate){
+			case dtcommentVar:
+				config->state = dtconfigStateProperty;
+				// Property state should remain untouched as entered by the comment state
+				break;
+			case dtcommentNode:
+			default:
+				config->state = dtconfigStateNode;
+				config->propertystate = dtpropUnknown;
+		}
 	}
 	
 	return DT_RETURN_NOERROR;
@@ -445,12 +839,15 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 						// This is a comment or comment block
 						if (c == '*'){
 							config->state = dtconfigStateCommentBlock;
+							config->commentstate = dtcommentNode;
 						}else{
+							// this is a // comment
 							config->state = dtconfigStateComment;
+							config->commentstate = dtcommentNode;
 						}
 						break;
 					}
-					// Fall through * to be just another character for command name
+					// Fall through * or / to be just another character for command name
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 					break;
 				case ' ':
@@ -465,20 +862,16 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 			break;
 		case dtcmdValue:
 			switch(c){
+				case '\r':
+				case '\n':
+					break;
 				case '"':
 					if (config->quoting){
 						config->quoting = FALSE;
 					}else{
 						config->quoting = TRUE;
+						break;
 					}
-					break;
-				case '\r':
-				case '\n':
-					// Not valid exit condition. 
-					//return DT_RETURN_PARAM_ERROR; // no semi colon at end of line
-					break;
-				case ' ':
-				case '\t':
 				case ';':
 					if (!config->quoting){
 						if (config->tempIndex > 0){
@@ -503,6 +896,11 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 						break;
 					}
 					// else fall through
+				case ' ':
+				case '\t':
+					if (config->tempIndex == 0){
+						break;
+					}
 				default:
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 			}
@@ -535,10 +933,86 @@ static void _strToNode(char *str, struct devicetreeNode *node)
 	}
 }
 
+static UWORD _doNewNode(struct devicetreeConfig *config)
+{
+	struct devicetreeNode *node = NULL ;
+	struct devicetreeReference *refl = NULL, *refp = NULL, *ref= NULL;
+	char strPath[DT_MAX_REFERENCE];
+	
+	if (!(node = _createNode(config, config->currentNode))){
+		return DT_RETURN_NOMEM;
+	}
+	config->currentNode = node ;
+	if (config->tempIndex > 0){
+		_strToNode(config->temp, node);
+	}
+	dtStrCpy(node->label, config->label, DT_MAX_NODE_LABEL);
+	
+	if (node->label[0]){
+		// If reference exists for label then add node if doesn't exist
+		if ((refl = _getReference(config, node->label, NULL, NULL)) && !refl->node){
+			refl->node = node ;
+		}
+		// Check for forward path references and update
+		strPath[0] = '\0';
+		if (_getNodePath(node, strPath, DT_MAX_REFERENCE) == DT_RETURN_NOERROR){
+			if ((refp=_getReference(config, NULL, strPath, NULL))){
+				refp->node = node ;
+				if (!refl){
+					dtStrCpy(refp->referenceName, node->label, DT_MAX_NODE_LABEL);
+				}
+			}
+		}
+		// If no path or label reference then create new one
+		if (!refp && !refl){
+			if (!(ref=_createReference(config, node->label, strPath, NULL))){
+				return DT_RETURN_NOMEM;
+			}
+		}
+	}
+	return DT_RETURN_NOERROR;
+}
+
+static UWORD _doOverlayNode(struct devicetreeConfig *config)
+{
+	struct devicetreeNode *n=NULL;
+	struct devicetreeReference *r=NULL;
+	char *p = NULL ;
+	if (config->temp[0] != '&'){
+		return DT_RETURN_PARAM_ERROR ; // Shouldn't call unless temp is a reference
+	}
+	
+	// temp is a reference to path or a label
+	if (config->temp[1] == '{'){
+		// This is a path ref
+		for (p = config->temp+2; *p;p++){
+			if (*p == '}'){
+				*p = '\0';
+				break;
+			}
+		}
+		n = getNode(config, config->temp+2);
+	}else{
+		// This is a label ref to a node
+		if ((r=_getReference(config, config->temp+1, NULL, NULL))){
+			n = r->node ;
+		}
+	}
+	
+	if (!n){
+		// No node found - error in file (we are not doing forward refs here)
+		return DT_RETURN_PARAM_ERROR;
+	}
+	
+	config->currentNode = n ;
+	
+	return DT_RETURN_NOERROR;
+}
+
 static UWORD _parseNode(struct devicetreeConfig *config, char c)
 {
+	UWORD ret = 0;
 	struct devicetreeProperty *property = NULL ;
-	struct devicetreeNode *node = NULL ;
 	
 	switch(c){
 		case ':': // Label identifier
@@ -565,13 +1039,21 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 		case ';':// End marker
 		case '=':// Property assignment 
 			if (config->tempIndex > 0){
-				// Chars in the temp buffer - this could be a property with no value
-				if (!(property = _createProperty(config, config->currentNode))){
-					return DT_RETURN_NOMEM;
+				if ((property=getProperty(config, config->currentNode, config->temp))){
+					// Property exists - this will override and therefore delete any set values
+					_deletePropertyValues(property);
+				}else{
+					// Does not already exists
+					// Create new propery
+					if (!(property = _createProperty(config, config->currentNode))){
+						return DT_RETURN_NOMEM;
+					}
+					dtStrCpy(property->name, config->temp, DT_MAX_PROPERTY_NAME);
+					dtStrCpy(property->label, config->label, DT_MAX_NODE_LABEL); // copy any set label
 				}
+				// Set property as current object
 				config->currentObject = (struct devicetreeObject*)property ;
-				dtStrCpy(property->name, config->temp, DT_MAX_PROPERTY_NAME);
-				dtStrCpy(property->label, config->label, DT_MAX_NODE_LABEL); // copy any set label
+
 				config->label[0] = '\0';
 				config->tempIndex = 0; // reset for capture of new value
 				config->state = dtconfigStateProperty;
@@ -593,17 +1075,22 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 			config->label[0] = '\0';
 			break; 
 		case '{':
-			// Opening of a node definition
-			if (!(node = _createNode(config, config->currentNode))){
-				return DT_RETURN_NOMEM;
+			if (config->lastchar == '&'){
+				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+			}else{
+				// Opening of a node definition
+				if (config->temp[0] == '&'){
+					if ((ret=_doOverlayNode(config)) != DT_RETURN_NOERROR){
+						return ret;
+					}
+				}else{
+					if ((ret=_doNewNode(config)) != DT_RETURN_NOERROR){
+						return ret;
+					}
+				}
+				config->tempIndex = 0 ;
+				config->label[0] = '\0';
 			}
-			config->currentNode = node ;
-			if (config->tempIndex > 0){
-				_strToNode(config->temp, node);
-			}
-			dtStrCpy(node->label, config->label, DT_MAX_NODE_LABEL);
-			config->tempIndex = 0 ;
-			config->label[0] = '\0';
 			break;
 		case '}':
 			// Closing node definition
@@ -823,7 +1310,7 @@ UWORD dtOpenBuffer(struct devicetreeConfig *config, UBYTE *buffer, ULONG len)
 
 UWORD dtParseConfig(struct devicetreeConfig *config, dt_object_callback fn_callback)
 {
-	char c;
+	char c='\0';
 	UWORD ret = DT_RETURN_NOERROR ;
 	LONG fret = 0;
 	BOOL commentBlock = FALSE ;
@@ -834,7 +1321,7 @@ UWORD dtParseConfig(struct devicetreeConfig *config, dt_object_callback fn_callb
 	
 	for (;config->currentStream;config->currentStream = config->currentStream->prev){
 		for(;config->currentStream->offset < config->currentStream->streamLen;config->currentStream->offset++){
-			
+			config->lastchar = c;
 			// Read next character from file stream or memory buffer
 			if (config->currentStream->f){
 				if ((fret=Read(config->currentStream->f,&c,1)) != 1){
@@ -857,6 +1344,7 @@ UWORD dtParseConfig(struct devicetreeConfig *config, dt_object_callback fn_callb
 			}
 		
 replay:
+			commentBlock = FALSE ;
 			switch(config->state){
 				case dtconfigStateNode:
 					ret = _parseNode(config,c);
@@ -889,40 +1377,54 @@ replay:
 
 void dtClose(struct devicetreeConfig *config)
 {
+	void *freeMe; // Need to save this as freeing the var invalidates the change in linked list ref
 	struct devicetreeNode *dtslvl, *dtssib ;
 	struct devicetreeObject *dtsobjs;
-	struct devicetreeValue *dtsvals;
 	struct devicetreeProperty *dtsprop;
 	struct devicetreeStream *dtstream;
+	struct devicetreeReference *ref;
 	
-	for(dtslvl = getLastChildNode(&config->topNode);dtslvl;dtslvl=dtslvl->parent){
-		for(dtssib=getLastSiblingNode(dtslvl); dtssib; dtssib=dtssib->prev){
-			for(dtsobjs = getLastObject(dtssib); dtsobjs; dtsobjs=dtsobjs->prev){
+	for(dtslvl = getLastChildNode(&config->topNode);dtslvl;){
+		for(dtssib=getLastSiblingNode(dtslvl); dtssib;){
+			for(dtsobjs = getLastObject(dtssib); dtsobjs;){
 				if (dtsobjs->type == DT_OBJECT_PROPERTY){
 					dtsprop = (struct devicetreeProperty*)dtsobjs;
-					for(dtsvals = getLastValue(dtsprop); dtsvals; dtsvals=dtsvals->prev){
-						if (dtsvals->value && dtsvals->size >0){
-							FreeVec(dtsvals->value);
-						}
-						FreeVec(dtsvals);
-					}
+					_deletePropertyValues(dtsprop);
 				}
-				
-				FreeVec(dtsobjs);
+				freeMe = dtsobjs;
+				dtsobjs = dtsobjs->prev;
+				FreeVec(freeMe);
 			}
-			FreeVec(dtssib);
+			freeMe = dtssib;
+			dtssib = dtssib->prev;
+			FreeVec(freeMe);
 		}
 		if (dtslvl != &config->topNode){
-			FreeVec(dtslvl);
+			freeMe = dtslvl;
+			if ((dtslvl = dtslvl->parent)){
+				dtslvl->child = NULL;
+			}
+			
+			FreeVec(freeMe);
+		}else{
+			dtslvl = NULL;
 		}
 	}
 	
-	for(dtstream=getLastStream(config);dtstream;dtstream=dtstream->prev){
+	for(dtstream=getLastStream(config);dtstream;){
 		if (dtstream->configOpened){
 			Close(dtstream->f);
 			dtstream->f = NULL;
 		}
-		FreeVec(dtstream);
+		freeMe = dtstream;
+		dtstream = dtstream->prev;
+		FreeVec(freeMe);
+	}
+	
+	for(ref=config->refTop;ref;){
+		freeMe = ref;
+		ref = ref->next;
+		FreeVec(freeMe);
 	}
 	
 	CloseLibrary(config->dos);
@@ -943,6 +1445,7 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 	WORD dividerAt = 0, addressAt = 0;
 	struct devicetreeNode *n = NULL;	
 	BOOL justRoot = FALSE, matchNode=FALSE;
+	char *strAddress = NULL ;
 	
 	n = config->topNode.child;
 	
@@ -953,6 +1456,7 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 	}
 	
 	do{
+		matchNode = FALSE;
 		dividerAt = _terminatePath(path);
 		// Look for node
 		for (;n && !matchNode;n=n->next){
@@ -971,9 +1475,9 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 				}
 			}
 			if (addressAt >= 0){ // there is an address component to the path name
-				path = _restoreNodeName(path, addressAt); // restore string and move path pointer to address
+				strAddress = _restoreNodeName(path, addressAt); // restore string and move path pointer to address
 				matchNode = FALSE ;
-				if (dtStriCmp(n->unitAddress, path, DT_MAX_NODE_ADDRESS)){
+				if (dtStriCmp(n->unitAddress, strAddress, DT_MAX_NODE_ADDRESS)){
 					matchNode=TRUE;
 				}
 			}

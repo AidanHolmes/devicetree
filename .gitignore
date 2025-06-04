@@ -11,6 +11,7 @@
 *.ilk
 *.map
 *.exp
+*.lnk
 
 # Precompiled Headers
 *.gch
@@ -24,6 +25,7 @@
 
 # Shared objects (inc. Windows DLLs)
 *.dll
+*.library
 *.so
 *.so.*
 *.dylib
@@ -52,4 +54,4 @@ Mkfile.old
 dkms.conf
 dtstest
 dtslibrary
-devicetree.library
+dts.library

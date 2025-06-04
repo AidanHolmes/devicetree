@@ -5,7 +5,7 @@
 
 
 /*
-**	$VER: dts_protos.h 1.0 (28.05.2025)
+**	$VER: dts_protos.h 1.0 (30.05.2025)
 **
 **	C prototypes. For use with 32 bit integers only.
 **
