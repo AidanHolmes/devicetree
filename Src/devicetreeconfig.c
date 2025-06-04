@@ -198,11 +198,49 @@ static struct devicetreeStream* _addStream(struct devicetreeConfig *config)
 	}
 	return p;
 }
+static void _deletePropertyValues(struct devicetreeProperty *property)
+{
+	struct devicetreeValue *dtsvals, *freeMe;
+	
+	for(dtsvals = getLastValue(property); dtsvals;){
+		if (dtsvals->value && dtsvals->size >0){
+			FreeVec(dtsvals->value);
+		}
+		freeMe = dtsvals;
+		dtsvals = dtsvals->prev;
+		FreeVec(freeMe);
+	}
+	property->values = NULL;
+}
+
+static void _deleteProperty(struct devicetreeProperty *property)
+{
+	struct devicetreeObject *o ;
+	
+	_deletePropertyValues(property);
+	
+	o=(struct devicetreeObject*)property;
+	
+	if (o->node){
+		if (o->node->firstObject == o){
+			o->node->firstObject = o->next ;
+		}
+	}
+	if (o->next){
+		o->next->prev = o->prev;
+	}
+	if (o->prev){
+		o->prev->next = o->next;
+	}
+	
+	FreeVec(property);
+}
 
 static UWORD _handleCommand(struct devicetreeConfig *config, struct devicetreeCommand *cmd)
 {
 	UWORD ret ;
 	BPTR f;
+	struct devicetreeProperty* property ;
 
 	if (dtStriCmp("include", cmd->name, DT_MAX_COMMAND_VALUE)){
 		if(!(f = Open(cmd->value, MODE_OLDFILE))){
@@ -213,6 +251,10 @@ static UWORD _handleCommand(struct devicetreeConfig *config, struct devicetreeCo
 		}
 		config->currentStream->configOpened = TRUE ; // This was opened automatically. Needs closing by this code
 		
+	}else if (dtStriCmp("delete-property", cmd->name, DT_MAX_COMMAND_VALUE)){
+		if ((property=getProperty(config, config->currentNode, cmd->value))){
+			_deleteProperty(property);
+		}
 	}
 	return DT_RETURN_NOERROR;
 }
@@ -697,6 +739,7 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 					config->tempIndex = 0;
 				}
 				config->propertystate = dtpropUnknown;
+				return DT_RETURN_REPLAY; // Re-run the last char into the parser
 			}else{
 				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
 			}
@@ -890,10 +933,86 @@ static void _strToNode(char *str, struct devicetreeNode *node)
 	}
 }
 
+static UWORD _doNewNode(struct devicetreeConfig *config)
+{
+	struct devicetreeNode *node = NULL ;
+	struct devicetreeReference *refl = NULL, *refp = NULL, *ref= NULL;
+	char strPath[DT_MAX_REFERENCE];
+	
+	if (!(node = _createNode(config, config->currentNode))){
+		return DT_RETURN_NOMEM;
+	}
+	config->currentNode = node ;
+	if (config->tempIndex > 0){
+		_strToNode(config->temp, node);
+	}
+	dtStrCpy(node->label, config->label, DT_MAX_NODE_LABEL);
+	
+	if (node->label[0]){
+		// If reference exists for label then add node if doesn't exist
+		if ((refl = _getReference(config, node->label, NULL, NULL)) && !refl->node){
+			refl->node = node ;
+		}
+		// Check for forward path references and update
+		strPath[0] = '\0';
+		if (_getNodePath(node, strPath, DT_MAX_REFERENCE) == DT_RETURN_NOERROR){
+			if ((refp=_getReference(config, NULL, strPath, NULL))){
+				refp->node = node ;
+				if (!refl){
+					dtStrCpy(refp->referenceName, node->label, DT_MAX_NODE_LABEL);
+				}
+			}
+		}
+		// If no path or label reference then create new one
+		if (!refp && !refl){
+			if (!(ref=_createReference(config, node->label, strPath, NULL))){
+				return DT_RETURN_NOMEM;
+			}
+		}
+	}
+	return DT_RETURN_NOERROR;
+}
+
+static UWORD _doOverlayNode(struct devicetreeConfig *config)
+{
+	struct devicetreeNode *n=NULL;
+	struct devicetreeReference *r=NULL;
+	char *p = NULL ;
+	if (config->temp[0] != '&'){
+		return DT_RETURN_PARAM_ERROR ; // Shouldn't call unless temp is a reference
+	}
+	
+	// temp is a reference to path or a label
+	if (config->temp[1] == '{'){
+		// This is a path ref
+		for (p = config->temp+2; *p;p++){
+			if (*p == '}'){
+				*p = '\0';
+				break;
+			}
+		}
+		n = getNode(config, config->temp+2);
+	}else{
+		// This is a label ref to a node
+		if ((r=_getReference(config, config->temp+1, NULL, NULL))){
+			n = r->node ;
+		}
+	}
+	
+	if (!n){
+		// No node found - error in file (we are not doing forward refs here)
+		return DT_RETURN_PARAM_ERROR;
+	}
+	
+	config->currentNode = n ;
+	
+	return DT_RETURN_NOERROR;
+}
+
 static UWORD _parseNode(struct devicetreeConfig *config, char c)
 {
+	UWORD ret = 0;
 	struct devicetreeProperty *property = NULL ;
-	struct devicetreeNode *node = NULL ;
 	
 	switch(c){
 		case ':': // Label identifier
@@ -920,13 +1039,21 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 		case ';':// End marker
 		case '=':// Property assignment 
 			if (config->tempIndex > 0){
-				// Chars in the temp buffer - this could be a property with no value
-				if (!(property = _createProperty(config, config->currentNode))){
-					return DT_RETURN_NOMEM;
+				if ((property=getProperty(config, config->currentNode, config->temp))){
+					// Property exists - this will override and therefore delete any set values
+					_deletePropertyValues(property);
+				}else{
+					// Does not already exists
+					// Create new propery
+					if (!(property = _createProperty(config, config->currentNode))){
+						return DT_RETURN_NOMEM;
+					}
+					dtStrCpy(property->name, config->temp, DT_MAX_PROPERTY_NAME);
+					dtStrCpy(property->label, config->label, DT_MAX_NODE_LABEL); // copy any set label
 				}
+				// Set property as current object
 				config->currentObject = (struct devicetreeObject*)property ;
-				dtStrCpy(property->name, config->temp, DT_MAX_PROPERTY_NAME);
-				dtStrCpy(property->label, config->label, DT_MAX_NODE_LABEL); // copy any set label
+
 				config->label[0] = '\0';
 				config->tempIndex = 0; // reset for capture of new value
 				config->state = dtconfigStateProperty;
@@ -948,17 +1075,22 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 			config->label[0] = '\0';
 			break; 
 		case '{':
-			// Opening of a node definition
-			if (!(node = _createNode(config, config->currentNode))){
-				return DT_RETURN_NOMEM;
+			if (config->lastchar == '&'){
+				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+			}else{
+				// Opening of a node definition
+				if (config->temp[0] == '&'){
+					if ((ret=_doOverlayNode(config)) != DT_RETURN_NOERROR){
+						return ret;
+					}
+				}else{
+					if ((ret=_doNewNode(config)) != DT_RETURN_NOERROR){
+						return ret;
+					}
+				}
+				config->tempIndex = 0 ;
+				config->label[0] = '\0';
 			}
-			config->currentNode = node ;
-			if (config->tempIndex > 0){
-				_strToNode(config->temp, node);
-			}
-			dtStrCpy(node->label, config->label, DT_MAX_NODE_LABEL);
-			config->tempIndex = 0 ;
-			config->label[0] = '\0';
 			break;
 		case '}':
 			// Closing node definition
@@ -1248,23 +1380,16 @@ void dtClose(struct devicetreeConfig *config)
 	void *freeMe; // Need to save this as freeing the var invalidates the change in linked list ref
 	struct devicetreeNode *dtslvl, *dtssib ;
 	struct devicetreeObject *dtsobjs;
-	struct devicetreeValue *dtsvals;
 	struct devicetreeProperty *dtsprop;
 	struct devicetreeStream *dtstream;
+	struct devicetreeReference *ref;
 	
 	for(dtslvl = getLastChildNode(&config->topNode);dtslvl;){
 		for(dtssib=getLastSiblingNode(dtslvl); dtssib;){
 			for(dtsobjs = getLastObject(dtssib); dtsobjs;){
 				if (dtsobjs->type == DT_OBJECT_PROPERTY){
 					dtsprop = (struct devicetreeProperty*)dtsobjs;
-					for(dtsvals = getLastValue(dtsprop); dtsvals;){
-						if (dtsvals->value && dtsvals->size >0){
-							FreeVec(dtsvals->value);
-						}
-						freeMe = dtsvals;
-						dtsvals = dtsvals->prev;
-						FreeVec(freeMe);
-					}
+					_deletePropertyValues(dtsprop);
 				}
 				freeMe = dtsobjs;
 				dtsobjs = dtsobjs->prev;
@@ -1296,6 +1421,12 @@ void dtClose(struct devicetreeConfig *config)
 		FreeVec(freeMe);
 	}
 	
+	for(ref=config->refTop;ref;){
+		freeMe = ref;
+		ref = ref->next;
+		FreeVec(freeMe);
+	}
+	
 	CloseLibrary(config->dos);
 	config->dos = NULL ;
 	memset(&config->topNode, 0, sizeof(struct devicetreeNode));
@@ -1314,6 +1445,7 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 	WORD dividerAt = 0, addressAt = 0;
 	struct devicetreeNode *n = NULL;	
 	BOOL justRoot = FALSE, matchNode=FALSE;
+	char *strAddress = NULL ;
 	
 	n = config->topNode.child;
 	
@@ -1343,9 +1475,9 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 				}
 			}
 			if (addressAt >= 0){ // there is an address component to the path name
-				path = _restoreNodeName(path, addressAt); // restore string and move path pointer to address
+				strAddress = _restoreNodeName(path, addressAt); // restore string and move path pointer to address
 				matchNode = FALSE ;
-				if (dtStriCmp(n->unitAddress, path, DT_MAX_NODE_ADDRESS)){
+				if (dtStriCmp(n->unitAddress, strAddress, DT_MAX_NODE_ADDRESS)){
 					matchNode=TRUE;
 				}
 			}
