@@ -1,0 +1,111 @@
+/* Represents a Rev 6 A500*/
+
+/ {
+	memory@0 {
+		device-type = "memory";
+		reg = <0x00000000 0x00200000>; // Chip RAM or System ROM Overlay
+		//<0x00200000 0x00800000>; // Fast RAM or Zorro II and Credit Card Memory
+		//<0x40000000 0x40000000>; // Zorro III space
+	};
+	
+	aliases {
+		
+	};
+	
+	cpus {
+		cpu0: cpu@0{
+			compatible = "motorola,68000";
+			device_type = "cpu";
+			#interrupts-cells = <1>;
+			interrupt-controller;
+			interrupts = <1 2 3 4 5 6 7>;
+		};
+	};
+	
+	bus {
+		compatible = "simple-bus";
+		reg = <0x0 0xFFFFFFFF>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		
+		ciaa: cia@00BFE001 {
+			compatible = "commodore,amigaocsciaa";
+			reg = <0x00BFE001 0x1000>;
+			interrupts-extended = <&inthandler 2>;
+			ranges;
+			gpio@00BFE001{
+				compatible = "commodore,amigagpio";
+				portA {
+					compatible = "commodore,amigaport";
+				};
+			};
+			gpio@00BFE101{
+				compatible = "commodore,amigagpio";
+				parallelport{
+					compatible = "commodore,amigaocspar";
+				};
+			};
+			timera0: timer@00BFE401{
+				compatible = "commodore,amigaocstimer";
+				reg = <0x00BFE401 0x200>;
+			};
+			timerb0: timer@00BFE601{
+				compatible = "commodore,amigaocstimer";
+				reg = <0x00BFE601 0x200>;
+			};
+			vsynctimer: timer@00BFE801{
+				compatible = "commodore,amigaocsvsynctimer";
+				reg = <0x00BFE801 0x300>;
+			};
+		};
+		
+		ciab: cia@00BFD000{
+			compatible = "commodore,amigaocsciaa";
+			reg = <0x00BFD000 0x1000>;
+			interrupts-extended = <&inthandler 6>;
+			ranges;
+			gpio@00BFD000{
+				compatible = "commodore,amigagpio";
+				serialport{
+					compatible = "commodore,amigaocsser";
+				};
+			};
+			gpio@00BFD100{
+				compatible = "commodore,amigagpio";
+				diskdrive{
+					compatible = "commodore,amigadiskdrive";
+				};
+			};
+			timera1: timer@00BFD400{
+				compatible = "commodore,amigaocstimer";
+				reg = <0x00BFD400 0x200>;
+			};
+			
+			timerb1: timer@00BFD600{
+				compatible = "commodore,amigaocstimer";
+				reg = <0x00BFD600 0x200>;
+			};
+		};
+		
+		inthandler: paula@DFF0A0{
+			reg = <0xDFF0A0 0x3C>; // Audio registes
+			#interrupts-cells = <1>;
+			interrupt-map = <0x00BFE001 2 &cpu0 2>,
+							<0x00BFD000 6 &cpu0 6>,
+							<0x00000000 3 &cpu0 3>;
+
+		};
+		
+		videocontroler: denise@DFF007{
+			reg = <0xDFF007 0x0F>; // Denise ID register
+		};
+		
+		dmacontroller: agnus@DFF004{
+			reg = <0xDFF004 0x0F>, // VPOSR register
+					<0xDFF096 0x0A>; // DMA registers
+			compatible = "commodore,agnus-8372A";
+			interrupts-extended = <&inthandler 3>;
+		};
+	};
+};

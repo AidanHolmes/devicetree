@@ -24,7 +24,7 @@ int main (int argc, char **argv)
 		printf("Cannot open device tree library\n");
 		return 0;
 	}
-	dtBus = DTS_GetNode("/bus") ;
+	dtBus = DTS_GetNodeByPath("/bus") ;
 	if (!dtBus){
 		printf("No /bus node in the DTS\n");
 		goto exit;

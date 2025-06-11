@@ -1,0 +1,28 @@
+/dts-v1/;
+
+/include/ "ENVARC:amigabase.dtsi";
+/include/ "ENVARC:amiga1200.dtsi";
+
+/ {
+	bus {
+		spider: clockport-device@d80001 {
+			compatible = "clockport,rpi-spi";
+			status = "disabled";
+			model = "rpi,spider-v1";
+			reg = <0xD80001 0x10>;
+		};
+	};
+};
+
+/* Example overlay of installed devices */
+/{
+	bus{
+		clockport-device@d80001 {
+			status = "okay";
+		};
+	};
+};
+
+&creditcardcontroller {
+	clockport-device@
+};

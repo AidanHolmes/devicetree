@@ -17,64 +17,88 @@
 #define DTS_BASE_NAME DtsParserBase
 #endif
 
-#define DTS_GetNode(path) \
-	LP1(0x1e, APTR, DTS_GetNode, char *, path, a0, \
-	, DTS_BASE_NAME)
-
 #define DTS_GetNodeName(node) \
-	LP1(0x24, char*, DTS_GetNodeName, APTR, node, a0, \
+	LP1(0x1e, char*, DTS_GetNodeName, APTR, node, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetNodeAddress(node) \
-	LP1(0x2a, char*, DTS_GetNodeAddress, APTR, node, a0, \
+	LP1(0x24, char*, DTS_GetNodeAddress, APTR, node, a0, \
 	, DTS_BASE_NAME)
 
-#define DTS_GetFirstChildNode(path, compatible) \
-	LP2(0x30, APTR, DTS_GetFirstChildNode, char *, path, a0, char *, compatible, a1, \
-	, DTS_BASE_NAME)
-
-#define DTS_GetNextSiblingNode(node, compatible) \
-	LP2(0x36, APTR, DTS_GetNextSiblingNode, APTR, node, a0, char *, compatible, a1, \
+#define DTS_GetNodePath(node) \
+	LP1(0x2a, char*, DTS_GetNodePath, APTR, node, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetProperty(node, name) \
-	LP2(0x3c, APTR, DTS_GetProperty, APTR, node, a0, char *, name, a1, \
+	LP2(0x30, APTR, DTS_GetProperty, APTR, node, a0, char *, name, a1, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetFirstProperty(node) \
-	LP1(0x42, APTR, DTS_GetFirstProperty, APTR, node, a0, \
+	LP1(0x36, APTR, DTS_GetFirstProperty, APTR, node, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetNextProperty(lastProperty) \
-	LP1(0x48, APTR, DTS_GetNextProperty, APTR, lastProperty, a0, \
+	LP1(0x3c, APTR, DTS_GetNextProperty, APTR, lastProperty, a0, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetFirstChildNode(path, compatible) \
+	LP2(0x42, APTR, DTS_GetFirstChildNode, char *, path, a0, char *, compatible, a1, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetNextSiblingNode(node, compatible) \
+	LP2(0x48, APTR, DTS_GetNextSiblingNode, APTR, node, a0, char *, compatible, a1, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetNodeByAlias(aliasName) \
+	LP1(0x4e, APTR, DTS_GetNodeByAlias, char *, aliasName, a0, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetNodeByChosen(aliasName) \
+	LP1(0x54, APTR, DTS_GetNodeByChosen, char *, aliasName, a0, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetNodeByLabel(labelName) \
+	LP1(0x5a, APTR, DTS_GetNodeByLabel, char *, labelName, a0, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetNodeByPath(path) \
+	LP1(0x60, APTR, DTS_GetNodeByPath, char *, path, a0, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetCompatibleNodeInstance(compatibleStr, instance) \
+	LP2(0x66, APTR, DTS_GetCompatibleNodeInstance, char *, compatibleStr, a0, ULONG, instance, d1, \
+	, DTS_BASE_NAME)
+
+#define DTS_GetCompatibleNodeOKAY(compatibleStr) \
+	LP1(0x6c, APTR, DTS_GetCompatibleNodeOKAY, char *, compatibleStr, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetPropertyName(property) \
-	LP1(0x4e, char*, DTS_GetPropertyName, APTR, property, a0, \
+	LP1(0x72, char*, DTS_GetPropertyName, APTR, property, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetPropertyStringValue(property) \
-	LP1(0x54, char*, DTS_GetPropertyStringValue, APTR, property, a0, \
+	LP1(0x78, char*, DTS_GetPropertyStringValue, APTR, property, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetFirstPropertyValue(property) \
-	LP1(0x5a, APTR, DTS_GetFirstPropertyValue, APTR, property, a0, \
+	LP1(0x7e, APTR, DTS_GetFirstPropertyValue, APTR, property, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetNextPropertyValue(value) \
-	LP1(0x60, APTR, DTS_GetNextPropertyValue, APTR, value, a0, \
+	LP1(0x84, APTR, DTS_GetNextPropertyValue, APTR, value, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetValueSize(value) \
-	LP1(0x66, ULONG, DTS_GetValueSize, APTR, value, a0, \
+	LP1(0x8a, ULONG, DTS_GetValueSize, APTR, value, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetValueType(value) \
-	LP1(0x6c, UWORD, DTS_GetValueType, APTR, value, a0, \
+	LP1(0x90, UWORD, DTS_GetValueType, APTR, value, a0, \
 	, DTS_BASE_NAME)
 
 #define DTS_GetValue(value) \
-	LP1(0x72, APTR, DTS_GetValue, APTR, value, a0, \
+	LP1(0x96, APTR, DTS_GetValue, APTR, value, a0, \
 	, DTS_BASE_NAME)
 
 #endif /*  _INLINE_DTS_H  */

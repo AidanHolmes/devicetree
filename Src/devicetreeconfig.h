@@ -98,6 +98,7 @@ struct devicetreeNode{
 	struct devicetreeNode *child;
 	struct devicetreeNode *next;
 	struct devicetreeNode *prev;
+	struct devicetreeNode *overlay;
 	struct devicetreeObject *firstObject;
 };
 
@@ -176,6 +177,9 @@ void dtStrCpy(char *to, char *from, UWORD maxbuf);
 // Compare strings and ignore case
 BOOL dtStriCmp(char *a, char *b, UWORD max);
 
+// Remove whitespace from start and end of string
+void dtTrimStr(char *str);
+
 // Report last line number processed in current stream. Useful when errors happen
 ULONG lastLineNumber(struct devicetreeConfig *config);
 
@@ -200,5 +204,16 @@ struct devicetreeProperty* getProperty(struct devicetreeConfig *config, struct d
 // If lastProperty is set with the last result, then the function will return the next property or NULL if no more found.
 struct devicetreeProperty* iterateProperty(struct devicetreeConfig *config, struct devicetreeNode *node, struct devicetreeProperty *lastProperty);
 
+// Find a child node by name or address or both from an existing node. Found node will be returned by function or NULL if not found.
+// address or name can be null which implictly means match any name or address.
+struct devicetreeNode* findChildbyNameAddress(struct devicetreeConfig *config, struct devicetreeNode *parent, char *name, char *address);
+
+// Return a node path string. Note that this may add an entry to the reference table to save
+// the string in memory. 
+const char *getNodePath(struct devicetreeConfig *config, struct devicetreeNode *node);
+
+// Very specific function to obtain a node reference from a property value. This is common for /chosen and /aliases node data.
+// Returns NULL if no match or value isn't a reference
+struct devicetreeNode* getReferenceNodePropertyByPath(struct devicetreeConfig *config, char *path, char *nodeName);
 
 #endif

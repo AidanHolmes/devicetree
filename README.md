@@ -11,6 +11,7 @@ fd2pragma required to build headers. Uses Aminet version https://aminet.net/pack
 Not everything from all DTS specs will be in this parser due to some custom capabilities not referenced in v0.4 specification.
 
 Some info to note on implementation:
+* No DTB is compiled by this implementation. The DTS is parsed and available in memory to query, skipping any conversion to DTB
 * Multiline byte arrays and property arrays with comments supported within values 
 * Strings interpreted on single lines within quotes
 * Property arrays and arrays of u32 values are stored in arrays of Tag Items to handle values which are references
@@ -26,14 +27,13 @@ Some info to note on implementation:
 * No checking for /dts-v1/ directive. User code can still check for it, but parser does not enforce and assumes DTS format
 * Parser doesn't treat unrecognised directives/commands as an error. Will continue processing.
 * In general the parser isn't very strict and will try to read data as much as possible until it really can't go further. This may create odd results if DTS is not well formatted.
-* Overlays with label references or path references supported (like Zephyr)
+* Overlays with label references or path references supported (similar to Zephyr DTS). Path or node label must exist prior to creating overlay node (cannot forward reference)
 
 ## Limitations
-* Deletion of node (are recorded against node but no action taken)
-* Arithmetic, bitwise or logical expressions in property values (literal string saved as property value but not processed, parser fails if in values)
+* Arithmetic, bitwise or logical expressions in property values (literal string saved as property value but not processed, parser fails if arithmetic in values)
 * Max 300 chars for any parsed parameter (changeable in code, but more memory will be used)
 * Labels within values (limited purpose and seems useless as not referenced)
 
-Custom DTS capabilities outside of v0.4:--
+Custom DTS capabilities outside of v0.4:
 * MACROS are not implemented (no #define, #ifdef, #else, etc)
 * #include directives are not used. Use /include/ directive format from v0.4 spec

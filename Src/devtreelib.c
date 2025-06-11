@@ -61,9 +61,14 @@ void __saveds __asm libdev_cleanup(register __a6 struct LibDevBase *base)
 	}
 }
 
-void* __saveds __asm GetNode(register __a0 char *path, register __a6 struct LibDevBase *base)
+void* __saveds __asm GetNodeByPath(register __a0 char *path, register __a6 struct LibDevBase *base)
 {
 	return getNode((struct devicetreeConfig*)base->libData, path);
+}
+
+char* __saveds __asm GetNodePath(register __a0 APTR node, register __a6 struct LibDevBase *base)
+{
+	return getNodePath((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node);
 }
 
 char* __saveds __asm GetNodeName(register __a0 void *node, register __a6 struct LibDevBase *base)
@@ -179,4 +184,98 @@ APTR __saveds __asm GetValue(register __a0 APTR value, register __a6 struct LibD
 	}
 	
 	return ((struct devicetreeValue*)value)->value;
+}
+
+APTR __saveds __asm GetNodeByAlias(register __a0 char *aliasName, register __a6 struct LibDevBase *base)
+{
+	return getReferenceNodePropertyByPath((struct devicetreeConfig*)base->libData, "/aliases", aliasName);
+}
+
+APTR __saveds __asm GetNodeByChosen(register __a0 char *chosenName, register __a6 struct LibDevBase *base)
+{
+	return getReferenceNodePropertyByPath((struct devicetreeConfig*)base->libData, "/chosen", chosenName);
+}
+
+APTR __saveds __asm GetNodeByLabel(register __a0 char *labelName, register __a6 struct LibDevBase *base)
+{
+	struct devicetreeNode *dtsnode = NULL, *dtsnew = NULL ;
+	
+	if ((dtsnode = &((struct devicetreeConfig*)base->libData)->topNode)){
+		// Walk all nodes
+		while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew = dtsnode->parent->next)) ){
+			dtsnode = dtsnew ;
+			if (dtStriCmp(dtsnode->label, labelName, DT_MAX_NODE_LABEL)){
+				return dtsnode;
+			}
+		}
+	}
+	return NULL;
+}
+
+APTR __saveds __asm GetCompatibleNodeInstance(register __a0 char *compatibleStr, register __d1 UWORD instance, register __a6 struct LibDevBase *base)
+{
+	struct devicetreeNode *dtsnode = NULL, *dtsnew = NULL ;
+	struct devicetreeProperty *p;
+	struct devicetreeValue *v ;
+	UWORD instanceCount = 0;
+
+	if ((dtsnode = &((struct devicetreeConfig*)base->libData)->topNode)){
+		// Walk all nodes
+		while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew = dtsnode->parent->next)) ){
+			dtsnode = dtsnew ;
+			
+			if (p=getProperty((struct devicetreeConfig*)base->libData, dtsnode, "compatible")){
+				for (v=p->values; v; v=v->next){
+					if (v->type == DT_VALUE_STRING){
+						if (dtStriCmp((char*)v->value, compatibleStr, DT_MAX_TEMP_STR)){
+							if (instanceCount == instance){
+								return dtsnode;
+							}
+							instanceCount += 1;
+						}
+					}
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
+APTR __saveds __asm GetCompatibleNodeOKAY(register __a0 char *compatibleStr, register __a6 struct LibDevBase *base)
+{
+	struct devicetreeNode *dtsnode = NULL, *dtsnew = NULL ;
+	struct devicetreeProperty *p;
+	struct devicetreeValue *v ;
+	BOOL matchingNode;
+	
+	if ((dtsnode = &((struct devicetreeConfig*)base->libData)->topNode)){
+		// Walk all nodes
+		while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew = dtsnode->parent->next)) ){
+			dtsnode = dtsnew ;
+			
+			matchingNode = FALSE ;
+			
+			if (p=getProperty((struct devicetreeConfig*)base->libData, dtsnode, "compatible")){
+				for (v=p->values; v; v=v->next){
+					if (v->type == DT_VALUE_STRING){
+						if (dtStriCmp((char*)v->value, compatibleStr, DT_MAX_TEMP_STR)){
+							matchingNode = TRUE ;
+						}
+					}
+				}
+			}
+			if (matchingNode){
+				if (p=getProperty((struct devicetreeConfig*)base->libData, dtsnode, "status")){
+					for (v=p->values; v; v=v->next){
+						if (v->type == DT_VALUE_STRING){
+							if (dtStriCmp((char*)v->value, "okay", DT_MAX_TEMP_STR)){
+								return dtsnode;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return NULL;
 }

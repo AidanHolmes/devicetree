@@ -1,0 +1,28 @@
+/ {
+	cpus {
+		cpu0: cpu@0{
+			compatible = "motorola,68020";
+		};
+	};
+	
+	bus {
+		/delete-node/ agnus;
+		
+		dmacontroller: alice@DFF004{
+			reg = <0xDFF004 0x0F>, // VPOSR register
+					<0xDFF096 0x0A>; // DMA registers
+			compatible = "commodore,aliceaga";
+			interrupts-extended = <&inthandler 3>;
+		};
+		
+		creditcardcontroller: gayle@00600000{
+			reg = <0x600000 0x400000>, // 4Mb memory 
+					<0xA00000 0x20000>, // 128Kb attribute memory
+					<0xA20000 0x20000>, // 128Kb I/O
+					<0xA40000 0x20000>, // 128Kb credit card bits
+					<0xA60000 0x20000>, // 128Kb PC I/O
+					<0xDA0000 0x20000>; // IDE controller
+			compatible = "commodore,gayleaga";
+			interrupts-extended = <&inthandler 2>, <&inthandler 6>;
+	};
+};
