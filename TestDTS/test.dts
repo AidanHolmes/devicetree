@@ -36,7 +36,7 @@
 			compatible = "clockport-wifi";
 			phandle = <3>;
 			model = "rpi,picowyfy-v1";
-			reg = <0xD80001 0x10>;
+			reg = <0xD84001 0x10>;
 			inlinecomment = <0x11 0x00002345 /* Comment */ 0xFF 99>;
 			
 			interrupts = <&amiga &{/gayle/sbc@1200}>;
@@ -45,7 +45,7 @@
 		cp-314: clockport-device@d88001 {
 			compatible = "clockport-wifi", "clockport-spi", "clockport-storage";
 			model = "rpi,cp-A314-v1";
-			reg = <0xD80001 0x10>;
+			reg = <0xD88001 0x10>;
 			multiline = <0x00 0x00 0x00 0x00 0x00 /* stuff */
 			             0x01 0x02 0x0004 0x0005 0x06>; /* and nonsense */
 						 
@@ -59,8 +59,25 @@
 	};
 };
 
+// Overlay by reference
 &{/gayle/clockport-device@d88001} {
 	anotherproperty = "123";
 	interrupts = <&inthandler>;
 	/delete-property/ reg;
+	
+	childnode { property = "321"; };
+};
+
+// Overlay with new values in node and new child node
+/ {
+	gayle{
+		sbc@1200 {
+			compatible = "example";
+			reg = <0x01 0x08>;
+			
+			newnode{
+				compatible = "again";
+			};
+		};
+	};
 };

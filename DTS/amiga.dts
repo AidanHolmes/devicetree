@@ -1,0 +1,43 @@
+/dts-v1/;
+
+/include/ "ENVARC:amigabase.dtsi";
+/include/ "ENVARC:amiga1200.dtsi";
+
+/* Example overlay of installed devices */
+
+/* Device definitions, but disabled */
+/ {
+	bus {
+		spicontroller0: spider@d80001 {
+			compatible = "niklas,genericspi";
+			status = "disabled";
+			model = "rpi,spider-v1";
+			reg = <0xD80001 0x10>;
+		};
+	};
+	
+	&par0 {
+		spicontroller1: partospi@0{
+			reg = <0x0 0x08>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "niklas,genericspi";
+			status = "disabled";
+			model = "avr,partospi-v2";
+		};
+	};
+};
+
+/* Enable a device */
+/{
+	bus{
+		spider@d80001 {
+			status = "okay";
+			sdcard0: disk@A{
+				reg = <10>; // CS pin 10
+				compatible = "adafruit,micro-sd";
+			};
+		};
+	};
+};
+

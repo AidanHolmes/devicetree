@@ -6,15 +6,20 @@
 #include <dos/dos.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/cardres.h>
+#include <resources/card.h>
+#include <clib/expansion_protos.h>
+#include <libraries/configvars.h>
 
 #define DOSBase deviceTree.dos
+
+struct devicetreeConfig deviceTree;
 
 void doIndent(UWORD indent)
 {
 	UWORD i;
 	for (i=0;i<indent;i++){
 		putc(' ', stdout);
-		//printf(" ");
 	}
 }
 void printNode(struct devicetreeNode *n1, UWORD indent)
@@ -23,12 +28,22 @@ void printNode(struct devicetreeNode *n1, UWORD indent)
 	struct devicetreeCommand *cmd;
 	struct devicetreeProperty *prop;
 	struct devicetreeValue *val;
-	struct TagItem *ulArray;
+	struct TagItem *ulArray, tiReg[10], tiRegRelative[10];
 	UBYTE *bArray;
 	UWORD i=0;
 	struct devicetreeReference *ref;
+	ULONG size_cell, address_cell;
 	
-	doIndent(indent);printf("[Node name: \"%s\", label: \"%s\", address: \"%s\"]\n", n1->name, n1->label, n1->unitAddress);
+	memset(tiReg, 0, sizeof(struct TagItem)*10);
+	memset(tiRegRelative, 0, sizeof(struct TagItem)*10);
+	
+	getSizeAddressCells(&deviceTree, n1, &size_cell, &address_cell);
+	getRegActual(&deviceTree, n1, tiReg, 10);
+	getRegRelative(&deviceTree, n1, tiRegRelative, 10);
+	
+	doIndent(indent);printf("[Node label: \"%s\", name: \"%s\", address: \"%s\" BusAddress: 0x%04X, RegSize: %u]\n", n1->label, n1->name, n1->unitAddress,
+																													tiReg[address_cell-1].ti_Data,
+																													tiRegRelative[address_cell+(size_cell-1)].ti_Data);
 	for(o = n1->firstObject; o; o=o->next){
 		if (o->type == DT_OBJECT_PROPERTY){
 			prop = (struct devicetreeProperty*)o;
@@ -76,41 +91,67 @@ void printNode(struct devicetreeNode *n1, UWORD indent)
 	}
 }
 
-void printDTS(struct devicetreeConfig *config)
+void printCardResource(void)
 {
-	struct devicetreeNode *n1;
+	struct Library *CardResource;
+	struct CardMemoryMap *cmm;
 	
-	UWORD level = 0;
+	CardResource = (struct Library *)OpenResource(CARDRESNAME);
 	
-		
-	n1=&config->topNode;
+	cmm = GetCardMap() ;
+	printf("Card resources:\nCommon Memory %p\nAttriute Memory %p\nIO Memory %p\n", cmm->cmm_CommonMemory, cmm->cmm_AttributeMemory, cmm->cmm_IOMemory);
 	
-	do{
-		printNode(n1, level);
-		
-		if (n1->child){
-			n1 = n1->child;
-			level += 1;
-		}else{
-			while(!n1->next && n1 != &config->topNode){
-				level -= 1;
-				n1 = n1->parent;
-			}
+}
 
-			n1 = n1->next;
-		}
-	}while(n1);
+void printExpansionDevices(void)
+{
+	struct Library *ExpansionBase = NULL;
+	struct ConfigDev *cd=NULL;
+	
+	ExpansionBase = (struct Library*)OpenLibrary("expansion.library", 0L);
+	if (!ExpansionBase){
+		printf("Cannot open the expansion.library\n");
+		return ;
+	}
+	
+	for (cd = FindConfigDev(cd,-1,-1); cd; cd = FindConfigDev(cd,-1,-1)){
+		printf("Autoconfig board: Manufacturer ID %d, Product ID %d, Address %p, Size %d kb %s\n", 
+			cd->cd_Rom.er_Manufacturer, 
+			cd->cd_Rom.er_Product, 
+			cd->cd_BoardAddr, 
+			cd->cd_BoardSize / 1024,
+			(cd->cd_Rom.er_Type & ERTF_MEMLIST)?"Type is memory":"");
+	}
+	
+	CloseLibrary(ExpansionBase);
+}
+
+struct walkParams{
+	UWORD count ;
+};
+
+UWORD treeCallback(struct devicetreeConfig *config, struct devicetreeNode *node, void *context)
+{
+	UWORD depth = 0;
+	struct walkParams *p = context ;
+	struct devicetreeNode *n;
+	
+	p->count++;
+	for (depth=0, n=node; n; n=n->parent, depth++);
+	printNode(node, depth);
+	
+	return DT_RETURN_NOERROR;
 }
 
 int main(int argc, char **argv)
 {
 	BPTR f;
 	UWORD ret;
-	struct devicetreeConfig deviceTree;
 	struct devicetreeNode *n;
+	struct walkParams params;
 	
 	if (argc < 2){
-		printf("Usage: <filename>\n");
+		printf("Usage: <filename> [path]\n");
 		goto quit;
 	}
 	dtInitialise(&deviceTree);
@@ -131,28 +172,27 @@ int main(int argc, char **argv)
 		goto quit;
 	}
 	
-	printDTS(&deviceTree);
+	params.count = 0;
+	walkAllNodes(&deviceTree, deviceTree.topNode.child, treeCallback, &params);
+	printf("There are %d nodes in the DTS\n", params.count);
 	
-	if (!(n=getNode(&deviceTree, "/"))){
-		printf("Cannot find root node\n");
-	}else{
-		printf("Root node is:\n");
-		printNode(n, 2);
-	}
+	printCardResource();
+	printExpansionDevices();
 	
-	if (!(n=getNode(&deviceTree, "/bus"))){
-		printf("Cannot find bus node\n");
-	}else{
-		printf("Bus node is:\n");
-		printNode(n, 2);
-	}
-	
-	printf("All child nodes of bus:\n");
-	n=NULL;
-	while ((n = iterateChildNodes(&deviceTree, n, "/bus", NULL))){
-		printf("  Child node: %s@%s\n", n->name, n->unitAddress);
-	}
-	
+	if (argc >= 3){
+		if (!(n=getNode(&deviceTree, argv[2]))){
+			printf("Cannot find %s node path\n", argv[2]);
+		}else{
+			printf("%s node is:\n", argv[2]);
+			printNode(n, 2);
+		}
+		
+		printf("All child nodes of %s:\n", argv[2]);
+		n=NULL;
+		while ((n = iterateChildNodes(&deviceTree, n, argv[2], NULL))){
+			printf("  Child node: %s@%s\n", n->name, n->unitAddress);
+		}
+	}	
 quit:
 	if (f){Close(f);};
 	dtClose(&deviceTree);

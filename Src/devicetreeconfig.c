@@ -25,6 +25,27 @@
 	}
 }
 
+static WORD _terminateAddress(char *pathNodeName)
+{
+	WORD i = 0;
+	for (; pathNodeName[i] ;i++){
+		if (pathNodeName[i]=='@'){
+			pathNodeName[i] = '\0';
+			return i; // address marker at offset
+		}
+	}
+	return -1; // No address in path
+}
+
+static char* _restoreNodeName(char *pathNodeName, WORD addressDivider)
+{
+	if (addressDivider >= 0){
+		pathNodeName[addressDivider] = '@' ; // retore address marker
+		pathNodeName += addressDivider+1 ;
+	}
+	return pathNodeName;
+}
+
 static UWORD _getNodePath(struct devicetreeNode *node, char *strPath, UWORD maxLength)
 {
 	// Paths can be long so they will be allocated in memory and returned via strPath
@@ -126,6 +147,21 @@ static struct devicetreeReference* _getReference(struct devicetreeConfig *config
 	return r;
 }
 
+static struct devicetreeReference* _clearReferenceByNode(struct devicetreeConfig *config, struct devicetreeNode *node)
+{
+	// Searches by node and removes node link from references (if exist). Returns altered reference
+	struct devicetreeReference *r ;
+	
+	for	(r=config->refTop; r; r=r->next){
+		if (r->node == node){
+			r->node = NULL;
+			return r;
+		}
+	}
+	
+	return NULL;
+}
+
 static struct devicetreeReference* _createReference(struct devicetreeConfig *config, char *name, char *path, ULONG *phandle)
 {
 	// No duplicate check performed in this call. Use _getReference to find an existing record and only
@@ -198,6 +234,7 @@ static struct devicetreeStream* _addStream(struct devicetreeConfig *config)
 	}
 	return p;
 }
+
 static void _deletePropertyValues(struct devicetreeProperty *property)
 {
 	struct devicetreeValue *dtsvals, *freeMe;
@@ -236,12 +273,59 @@ static void _deleteProperty(struct devicetreeProperty *property)
 	FreeVec(property);
 }
 
+static void _deleteNode(struct devicetreeConfig *config, struct devicetreeNode *node)
+{
+	struct devicetreeNode *dtsnode, *dtsnew, *delnode;
+	struct devicetreeObject *o = NULL, *delme = NULL;
+
+	if ((dtsnode = node)){
+		while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnew=dtsnode->parent) ){
+			if (!dtsnode->child){ // Delete a node if it has no children
+				if (dtsnode->parent->child == dtsnode){
+					dtsnode->parent->child = NULL; // parent forgets child
+				}
+				
+				for(o=dtsnode->firstObject;o;){
+					if (o->type == DT_OBJECT_PROPERTY){
+						_deletePropertyValues((struct devicetreeProperty*)o);
+					}
+					delme = o ;
+					o=o->next;
+					FreeVec(delme);
+				}
+
+				if (dtsnode->next){
+					dtsnode->next->prev = dtsnode->prev;
+				}
+				if (dtsnode->prev){
+					dtsnode->prev->next = dtsnode->next;
+				}
+				_clearReferenceByNode(config, dtsnode); // clear any reference to the node (don't need to confirm return value)
+				delnode = dtsnode ;
+				FreeVec(delnode);
+				if (dtsnode == node){
+					return ; // all done
+				}
+			}
+			
+			dtsnode = dtsnew ;
+			if (dtsnode == &config->topNode){ // At top level, stop
+				return ;
+			}
+		}
+	}
+}
+
 static UWORD _handleCommand(struct devicetreeConfig *config, struct devicetreeCommand *cmd)
 {
 	UWORD ret ;
+	WORD addAt = -1;
 	BPTR f;
 	struct devicetreeProperty* property ;
+	struct devicetreeNode *node;
+	char *address = NULL;
 
+	dtTrimStr(cmd->value);
 	if (dtStriCmp("include", cmd->name, DT_MAX_COMMAND_VALUE)){
 		if(!(f = Open(cmd->value, MODE_OLDFILE))){
 			return DT_RETURN_PARAM_ERROR;
@@ -255,6 +339,14 @@ static UWORD _handleCommand(struct devicetreeConfig *config, struct devicetreeCo
 		if ((property=getProperty(config, config->currentNode, cmd->value))){
 			_deleteProperty(property);
 		}
+	}else if (dtStriCmp("delete-node", cmd->name, DT_MAX_COMMAND_VALUE)){
+		if ((addAt = _terminateAddress(cmd->value)) >= 0){
+			address = cmd->name+addAt+1;
+		}
+		if ((node = findChildbyNameAddress(config, config->currentNode, cmd->value, address))){
+			_deleteNode(config, node);
+		}
+		_restoreNodeName(cmd->name, addAt);
 	}
 	return DT_RETURN_NOERROR;
 }
@@ -343,6 +435,7 @@ static struct devicetreeValue *_createValue(struct devicetreeConfig *config, str
 	
 	return newValue;
 }
+
 static UWORD _strToBytes(char *str, struct devicetreeValue *value)
 {
 	char *p = NULL;
@@ -674,6 +767,18 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				default:
 					// other text - is this a label or calculation?
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+					if(config->lastchar == '/'){
+						if (c == '/' || c == '*'){
+							if (c == '*'){
+								config->state = dtconfigStateCommentBlock;
+							}else if(c == '/'){
+								config->state = dtconfigStateComment;
+							}
+							config->commentstate = dtcommentVar;
+							_popOutChar(config->temp, &config->tempIndex);
+							_popOutChar(config->temp, &config->tempIndex);
+						}
+					}
 			}
 			break;
 		case dtpropArray:
@@ -852,9 +957,11 @@ static UWORD _parseCommand(struct devicetreeConfig *config, char c)
 					break;
 				case ' ':
 				case '\t': // Whitespace in command is an error but may be a root char
+				case '{':
 					config->state = dtconfigStateNode;
 					config->tempIndex = 0;
 					_pushInChar(config->temp, '/', &config->tempIndex, DT_MAX_TEMP_STR);
+					return DT_RETURN_REPLAY;
 					break;
 				default:
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
@@ -938,38 +1045,51 @@ static UWORD _doNewNode(struct devicetreeConfig *config)
 	struct devicetreeNode *node = NULL ;
 	struct devicetreeReference *refl = NULL, *refp = NULL, *ref= NULL;
 	char strPath[DT_MAX_REFERENCE];
+	WORD addAt = -1;
+	char *address = NULL;
 	
-	if (!(node = _createNode(config, config->currentNode))){
-		return DT_RETURN_NOMEM;
+	if (config->tempIndex == 0){
+		return DT_RETURN_PARAM_ERROR;
 	}
+	
+	if ((addAt = _terminateAddress(config->temp)) >= 0){
+		address = config->temp+addAt+1;
+	}
+	
+	if (!(node = findChildbyNameAddress(config, config->currentNode, config->temp, address))){
+		if (!(node = _createNode(config, config->currentNode))){
+			return DT_RETURN_NOMEM;
+		}
+	}
+	_restoreNodeName(config->temp, addAt);
 	config->currentNode = node ;
-	if (config->tempIndex > 0){
-		_strToNode(config->temp, node);
-	}
-	dtStrCpy(node->label, config->label, DT_MAX_NODE_LABEL);
-	
-	if (node->label[0]){
+	_strToNode(config->temp, node);
+
+	if (config->label[0]){
+		dtStrCpy(node->label, config->label, DT_MAX_NODE_LABEL);
 		// If reference exists for label then add node if doesn't exist
 		if ((refl = _getReference(config, node->label, NULL, NULL)) && !refl->node){
 			refl->node = node ;
 		}
-		// Check for forward path references and update
-		strPath[0] = '\0';
-		if (_getNodePath(node, strPath, DT_MAX_REFERENCE) == DT_RETURN_NOERROR){
-			if ((refp=_getReference(config, NULL, strPath, NULL))){
-				refp->node = node ;
-				if (!refl){
-					dtStrCpy(refp->referenceName, node->label, DT_MAX_NODE_LABEL);
-				}
-			}
-		}
-		// If no path or label reference then create new one
-		if (!refp && !refl){
-			if (!(ref=_createReference(config, node->label, strPath, NULL))){
-				return DT_RETURN_NOMEM;
+	}
+	
+	// Check for forward path references and update
+	strPath[0] = '\0';
+	if (_getNodePath(node, strPath, DT_MAX_REFERENCE) == DT_RETURN_NOERROR){
+		if ((refp=_getReference(config, NULL, strPath, NULL))){
+			refp->node = node ;
+			if (!refl){
+				dtStrCpy(refp->referenceName, node->label, DT_MAX_NODE_LABEL);
 			}
 		}
 	}
+	// If no path or label reference then create new one
+	if (!refp && !refl){
+		if (!(ref=_createReference(config, node->label, strPath, NULL))){
+			return DT_RETURN_NOMEM;
+		}
+	}
+	
 	return DT_RETURN_NOERROR;
 }
 
@@ -1004,6 +1124,7 @@ static UWORD _doOverlayNode(struct devicetreeConfig *config)
 		return DT_RETURN_PARAM_ERROR;
 	}
 	
+	n->overlay = config->currentNode ;
 	config->currentNode = n ;
 	
 	return DT_RETURN_NOERROR;
@@ -1013,6 +1134,7 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 {
 	UWORD ret = 0;
 	struct devicetreeProperty *property = NULL ;
+	struct devicetreeNode *overlay = NULL;
 	
 	switch(c){
 		case ':': // Label identifier
@@ -1093,14 +1215,24 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 			}
 			break;
 		case '}':
-			// Closing node definition
-			config->currentNode = config->currentNode->parent; 
-			if (!config->currentNode){
-				// unmatched braces??
-				config->currentNode = &config->topNode;
+			if (config->tempIndex > 0){
+				_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+			}else{
+				// Closing node definition
+				if (config->currentNode->overlay){
+					overlay = config->currentNode->overlay;
+					config->currentNode->overlay = NULL ; // clear overlay
+					config->currentNode = overlay ;
+				}else{
+					config->currentNode = config->currentNode->parent; 
+				}
+				if (!config->currentNode){
+					// unmatched braces??
+					config->currentNode = &config->topNode;
+				}
+				config->tempIndex = 0 ;
+				config->label[0] = '\0';
 			}
-			config->tempIndex = 0 ;
-			config->label[0] = '\0';
 			break;
 		// Whitespace
 		case ' ':
@@ -1114,7 +1246,7 @@ static UWORD _parseNode(struct devicetreeConfig *config, char c)
 	return DT_RETURN_NOERROR;
 }
 
-WORD _terminatePath(char *path)
+static WORD _terminatePath(char *path)
 {
 	WORD i = 0;
 	for (; path[i] ;i++){
@@ -1126,34 +1258,13 @@ WORD _terminatePath(char *path)
 	return -1; // No more path dividers
 }
 
-char* _nextPathItem(char *path, WORD lastDivider)
+static char* _nextPathItem(char *path, WORD lastDivider)
 {
 	if (lastDivider >= 0){
 		path[lastDivider] = '/' ; // retore path
 		path += lastDivider+1 ;
 	}
 	return path;
-}
-
-WORD _terminateAddress(char *pathNodeName)
-{
-	WORD i = 0;
-	for (; pathNodeName[i] ;i++){
-		if (pathNodeName[i]=='@'){
-			pathNodeName[i] = '\0';
-			return i; // address marker at offset
-		}
-	}
-	return -1; // No address in path
-}
-
-char* _restoreNodeName(char *pathNodeName, WORD addressDivider)
-{
-	if (addressDivider >= 0){
-		pathNodeName[addressDivider] = '@' ; // retore address marker
-		pathNodeName += addressDivider+1 ;
-	}
-	return pathNodeName;
 }
 
 //////////////////////////////////////////////
@@ -1378,38 +1489,10 @@ replay:
 void dtClose(struct devicetreeConfig *config)
 {
 	void *freeMe; // Need to save this as freeing the var invalidates the change in linked list ref
-	struct devicetreeNode *dtslvl, *dtssib ;
-	struct devicetreeObject *dtsobjs;
-	struct devicetreeProperty *dtsprop;
 	struct devicetreeStream *dtstream;
 	struct devicetreeReference *ref;
 	
-	for(dtslvl = getLastChildNode(&config->topNode);dtslvl;){
-		for(dtssib=getLastSiblingNode(dtslvl); dtssib;){
-			for(dtsobjs = getLastObject(dtssib); dtsobjs;){
-				if (dtsobjs->type == DT_OBJECT_PROPERTY){
-					dtsprop = (struct devicetreeProperty*)dtsobjs;
-					_deletePropertyValues(dtsprop);
-				}
-				freeMe = dtsobjs;
-				dtsobjs = dtsobjs->prev;
-				FreeVec(freeMe);
-			}
-			freeMe = dtssib;
-			dtssib = dtssib->prev;
-			FreeVec(freeMe);
-		}
-		if (dtslvl != &config->topNode){
-			freeMe = dtslvl;
-			if ((dtslvl = dtslvl->parent)){
-				dtslvl->child = NULL;
-			}
-			
-			FreeVec(freeMe);
-		}else{
-			dtslvl = NULL;
-		}
-	}
+	_deleteNode(config, &config->topNode);
 	
 	for(dtstream=getLastStream(config);dtstream;){
 		if (dtstream->configOpened){
@@ -1501,6 +1584,28 @@ struct devicetreeNode* getNode(struct devicetreeConfig *config, char *path)
 	return n;
 }
 
+struct devicetreeNode* findChildbyNameAddress(struct devicetreeConfig *config, struct devicetreeNode *parent, char *name, char *address)
+{
+	struct devicetreeNode *n=NULL;
+	BOOL match = FALSE ;
+
+	for (n=parent->child ; n; n=n->next){ // iterate all children nodes
+		match = name==NULL?TRUE:FALSE ;
+		if (name){
+			match = dtStriCmp(n->name, name, DT_MAX_NODE_NAME);
+		}
+		if (match && address){
+			match = dtStriCmp(n->unitAddress, address, DT_MAX_NODE_ADDRESS);
+		}
+		
+		if (match){
+			break;
+		}
+	}
+	
+	return n; // Could be null for failed result
+}
+
 struct devicetreeNode* iterateChildNodes(struct devicetreeConfig *config, struct devicetreeNode *fromNode, char *path, char *compatible)
 {
 	struct devicetreeNode *containingNode=NULL, *n=NULL;
@@ -1575,4 +1680,318 @@ struct devicetreeProperty* iterateProperty(struct devicetreeConfig *config, stru
 		}
 	}
 	return NULL;
+}
+
+const char *getNodePath(struct devicetreeConfig *config, struct devicetreeNode *node)
+{
+	struct devicetreeReference *ref;
+	
+	for(ref=config->refTop; ref; ref=ref->next){
+		if (node == ref->node){
+			break; // found existing node in reference list
+		}
+	}
+	
+	// If we didn't find a reference then create one (we need to store the path somewhere)
+	if (!ref){
+		if (!(ref = _createReference(config, NULL, NULL, NULL))){
+			return NULL;
+		}
+	}
+	
+	// Set the path if it's not set against the reference
+	// There's a chance the function can fail for long paths, which is an implementation limitation
+	if (!ref->strPath[0]){
+		_getNodePath(node, ref->strPath, DT_MAX_REFERENCE);
+	}
+	
+	return ref->strPath;
+}
+
+struct devicetreeNode* getReferenceNodePropertyByPath(struct devicetreeConfig *config, char *path, char *nodeName)
+{
+	struct devicetreeNode *n = NULL;
+	struct devicetreeProperty *p = NULL ;
+	struct TagItem *u32;
+	struct devicetreeReference *ref = NULL ;
+	
+	if (!(n = getNode(config, path))){
+		return NULL ; // no aliases node in DTS
+	}
+	for (p = iterateProperty(config, n, NULL);p;iterateProperty(config, n, p)){
+		if (dtStriCmp(nodeName, p->name, DT_MAX_PROPERTY_NAME)){
+			if (p->values){
+				// Just use the first value for reference
+				if (p->values->type == DT_VALUE_STRING){
+					return getNode(config, (char*)p->values->value);
+				}else if(p->values->type == DT_VALUE_ULONG_ARRAY){
+					// Reference expected in return, check ref is not null and the reference has a non-null node
+					u32 = (struct TagItem*)p->values->value ;
+					if (u32->ti_Tag  == DT_ENCODED_VALUE_REFERENCE){
+						if ((ref=(struct devicetreeReference*)u32->ti_Data)){
+							return ref->node;
+						}
+					}
+				}
+			}
+			break;
+		}
+	}
+	
+	return NULL; // No node or value found
+}
+
+UWORD walkAllNodes(struct devicetreeConfig *config, struct devicetreeNode *node, dt_walk_callback fn, void *context)
+{
+	struct devicetreeNode *dtsnode, *dtsnew ;
+	UWORD ret = DT_RETURN_NOERROR;
+
+	if ((dtsnew = node)){
+		do{
+			do{
+				dtsnode = dtsnew ;
+				if (fn){
+					if ((ret=fn(config, dtsnode, context)) != DT_RETURN_NOERROR){
+						if (ret == DT_RETURN_STOP){
+							ret = DT_RETURN_NOERROR;
+						}
+						return ret ;
+					}
+				}
+			}while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew=dtsnode->parent->next)) );
+			while (!(dtsnew=dtsnode->next) && (dtsnew = dtsnode->parent) && dtsnew != node){
+				dtsnode = dtsnew;
+			}
+		}while(dtsnew != node);
+	}
+}
+#define _ISWS(x) (x == ' ' || x == '\t' || x == '\n' || x == '\t')
+/* inline */ void dtTrimStr(char *str)
+{
+	
+	char *p, *q;
+	BOOL trimming = TRUE ;
+	
+	for(p=str,q=str; *p; p++){
+		if (!(_ISWS(*p))){
+			trimming = FALSE ;
+			*q++ = *p;
+		}else{
+			if (!trimming){
+				*q++ = *p;
+			}
+		}
+	}
+	*q = '\0';
+	if (_ISWS(*(p-1))){
+		// we have whitespace and it's at the last char
+		for (p -= 1; p != str; p--){
+			if (_ISWS(*p)){
+				*p = '\0';
+			}else{
+				break;
+			}
+		}
+	}
+}
+
+BOOL getSizeAddressCells(struct devicetreeConfig *config, struct devicetreeNode *node, ULONG *size_cell, ULONG *address_cell)
+{
+	struct devicetreeProperty *p = NULL;
+	struct devicetreeValue *v = NULL;
+	struct TagItem *u32;
+	BOOL found = TRUE ;
+	
+	// As defined in 0.4 spec, the parent must define size and address cells, otherwise defaults assumed
+	if (node->parent){
+		if (size_cell){
+			if ((p = getProperty(config, node->parent, "#size-cell"))){
+				v = p->values;
+				if(v && v->type == DT_VALUE_ULONG_ARRAY && v->value){
+					u32 = (struct TagItem*)v->value ;
+					if (u32->ti_Tag == DT_ENCODED_VALUE_U32){
+						*size_cell = u32->ti_Data;
+					}
+				}
+			}else{
+				*size_cell = DT_DEFAULT_SIZE_CELL_VALUE;
+				found = FALSE;
+			}
+		}
+		if (address_cell){
+			if ((p = getProperty(config, node->parent, "#address-cell"))){
+				v = p->values;
+				if(v && v->type == DT_VALUE_ULONG_ARRAY && v->value){
+					u32 = (struct TagItem*)v->value ;
+					if (u32->ti_Tag == DT_ENCODED_VALUE_U32){
+						*address_cell = u32->ti_Data;
+					}
+				}
+			}else{
+				*address_cell = DT_DEFAULT_ADDRESS_CELL_VALUE;
+				found = FALSE;
+			}
+		}
+	}
+	return found;
+}
+
+UWORD getRegRelative(struct devicetreeConfig *config, struct devicetreeNode *node, struct TagItem *regValues, UWORD size)
+{
+	struct devicetreeNode *n = NULL ;
+	struct devicetreeProperty *p = NULL;
+	struct devicetreeValue *v = NULL;
+	UWORD i=0, count=0;
+	struct TagItem *regVals;
+	// Returns actual number of reg values needed
+	
+	for(n = node;n;n=n->parent){
+		if ((p = getProperty(config, n, "reg"))){
+			for (v=p->values;v;v=v->next){
+				if(v->type == DT_VALUE_ULONG_ARRAY){
+					if (v->value){
+						i=0;
+						for(regVals = v->value;regVals->ti_Tag != TAG_DONE;regVals++){
+							if(regValues && size > 0){
+								if (i < size-1){
+									regValues[i++] = *regVals;
+								}
+							}
+							count++;
+						}
+					}
+					if(regValues && size > 0){
+						regValues[i].ti_Tag = TAG_DONE;// Ensure termination of tag item list
+					}
+				}
+			}
+			if (count > 0){
+				// Found a reg value either in the node or in a parent
+				return count;
+			}
+		}
+	}
+	
+	return 0;
+}
+
+UWORD getRegActual(struct devicetreeConfig *config, struct devicetreeNode *node, struct TagItem *regValues, UWORD size)
+{
+	// Returns actual number of reg values needed
+	struct devicetreeNode *n = NULL ;
+	struct devicetreeProperty *p = NULL;
+	struct devicetreeValue *v = NULL;
+	UWORD i=0, j=0, count=0;
+	ULONG childsizecell, childaddresscell, rangesizecell, rangeaddresscell, originalsizecell, originaladdresscell, addressbase, sizebase, rangebase;
+	struct TagItem *regVals, *rangeVals;
+	
+	for(n = node;n;n=n->parent){
+		if ((p = getProperty(config, n, "reg"))){
+			for (v=p->values;v;v=v->next){
+				if(v->type == DT_VALUE_ULONG_ARRAY){
+					if (v->value){
+						for(regVals = v->value;regVals->ti_Tag != TAG_DONE;regVals++){
+							if(regValues && size > 0){
+								if (i < size-1){
+									regValues[i++] = *regVals;
+								}
+							}
+							count++;
+						}
+					}
+					if(regValues && size > 0){
+						regValues[i].ti_Tag = TAG_DONE;// Ensure termination of tag item list
+					}
+				}
+			}
+			if (count > 0){
+				// Found a reg value either in the node or in a parent
+				// Now interested in any alterations in the ranges property
+				break;
+			}
+		}
+	}
+	
+	if (!n){
+		return 0 ; // Failed to find any reg values
+	}
+	
+	// Need to understand the format of the reg values obtained. This is to help address range changes
+	getSizeAddressCells(config, n, &originalsizecell, &originaladdresscell);
+	
+	if (originaladdresscell == 0){
+		// Nothing to map as the reg has no address
+		return count;
+	}
+	
+	// Prime child cell values for conversion
+	childsizecell = originalsizecell;
+	childaddresscell = originaladdresscell;
+	
+	// keep iterating up the nodes for any ranges settings which would alter the 
+	// addresses
+	for(n=n->parent;n;n=n->parent){
+		getSizeAddressCells(config, n, &rangesizecell, &rangeaddresscell); // Get the parent properties
+		if ((p = getProperty(config, n, "ranges"))){
+			for (v=p->values;v;v=v->next){
+				if(v->type == DT_VALUE_ULONG_ARRAY){
+					if (v->value){
+						i=1;
+						for(rangeVals = v->value;rangeVals->ti_Tag != TAG_DONE;rangeVals++){
+							if (i == childaddresscell){
+								addressbase = rangeVals->ti_Data;
+							}
+							if (rangeaddresscell && (i == (childaddresscell+rangeaddresscell))){
+								rangebase = rangeVals->ti_Data;
+							}
+							if (rangesizecell && (i == (childaddresscell+rangeaddresscell+rangesizecell))){
+								sizebase = rangeVals->ti_Data;
+							}
+							if ((i % (childaddresscell+rangeaddresscell+rangesizecell))==0){
+								// Completed 1 set of ranges. Need to translate to original child values
+								// Iterate through all original node reg values
+								j=1;
+								for(regVals=regValues; regVals->ti_Tag != TAG_DONE; regVals++){
+									if(regVals->ti_Tag == DT_ENCODED_VALUE_U32){
+										if (j == originaladdresscell){
+											if (regVals->ti_Data >= addressbase && regVals->ti_Data <= (addressbase+sizebase)){
+												// This address needs remapping
+												regVals->ti_Data += rangebase;
+												regVals->ti_Tag = DT_ENCODED_VALUE_REGUPDATED;
+											}
+										}
+									}
+									
+									if ((j % (originaladdresscell+originalsizecell))==0){
+										j = 1; // New set of reg entries
+									}else{
+										j++;
+									}
+								}
+								i=1;
+							}else{
+								i++; // index through all values - cannot assume values actually match the DTS entered vals
+							}
+						}
+					}
+				}
+			}
+			// Remove all flags to indicate updates to an address
+			for(regVals=regValues; regVals->ti_Tag != TAG_DONE; regVals++){
+				if(regVals->ti_Tag == DT_ENCODED_VALUE_REGUPDATED){
+					regVals->ti_Tag = DT_ENCODED_VALUE_U32;
+				}
+			}
+			
+		}else{
+			// No ranges property set which means there's no relation between the child
+			// and parent mapping. Stop here.
+			break;
+		}
+		// Update parent values to now be child values as we iterate up to parent
+		childsizecell = rangesizecell;
+		childaddresscell = rangeaddresscell;
+	}
+	
+	return count;
 }

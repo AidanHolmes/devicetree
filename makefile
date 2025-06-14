@@ -1,5 +1,5 @@
 
-all: includes
+all: includes install
 
 clean:
    delete Include/C/pragma/\#? Include/C/inline/\#? Include/C/proto/\#? Include/C/inline/\#? Include/Assembly/lvo/\#? FD/\#?
@@ -12,7 +12,6 @@ includes: SFD/dts_lib.sfd
 	fd2pragma "SFD/dts_lib.sfd" 38 TO "Include/C/proto"
 	fd2pragma "SFD/dts_lib.sfd" 70 TO "Include/C/inline"
 	fd2pragma "SFD/dts_lib.sfd" 23 TO "Include/Assembly/lvo"
-
-srcbin:
-	smake -f Src/makefile
 	
+install:
+	copy DTS/\#? ENVARC:
