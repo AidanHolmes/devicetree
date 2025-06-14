@@ -32,42 +32,46 @@
 		ciaa: cia@00BFE001 {
 			compatible = "commodore,amigaocsciaa";
 			reg = <0x00BFE001 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
 			interrupts-extended = <&inthandler 2>;
-			ranges;
-			gpio@00BFE001{
+			ranges = <0x0 0xBFE001 0x1000>;
+			gpio@0{
 				compatible = "commodore,amigagpio";
-				portA {
-					compatible = "commodore,amigaport";
-				};
 			};
-			gpio@00BFE101{
+			gpio@100{
+				reg = <0x100 0x08>;
 				compatible = "commodore,amigagpio";
-				parallelport{
+				ranges;
+				par0: parallelport@100{
 					compatible = "commodore,amigaocspar";
+					ranges = <0x0 0x100 0x08>;
 				};
 			};
-			timera0: timer@00BFE401{
+			timera0: timer@400{
 				compatible = "commodore,amigaocstimer";
-				reg = <0x00BFE401 0x200>;
+				reg = <0x400 0x200>;
 			};
-			timerb0: timer@00BFE601{
+			timerb0: timer@600{
 				compatible = "commodore,amigaocstimer";
-				reg = <0x00BFE601 0x200>;
+				reg = <0x600 0x200>;
 			};
-			vsynctimer: timer@00BFE801{
+			vsynctimer: timer@800{
 				compatible = "commodore,amigaocsvsynctimer";
-				reg = <0x00BFE801 0x300>;
+				reg = <0x800 0x300>;
 			};
 		};
 		
 		ciab: cia@00BFD000{
 			compatible = "commodore,amigaocsciaa";
 			reg = <0x00BFD000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <1>;
 			interrupts-extended = <&inthandler 6>;
 			ranges;
 			gpio@00BFD000{
 				compatible = "commodore,amigagpio";
-				serialport{
+				ser0: serialport{
 					compatible = "commodore,amigaocsser";
 				};
 			};
@@ -89,7 +93,7 @@
 		};
 		
 		inthandler: paula@DFF0A0{
-			reg = <0xDFF0A0 0x3C>; // Audio registes
+			reg = <0xDFF0A0 0x3C>; // Audio registers
 			#interrupts-cells = <1>;
 			interrupt-map = <0x00BFE001 2 &cpu0 2>,
 							<0x00BFD000 6 &cpu0 6>,

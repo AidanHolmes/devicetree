@@ -14,6 +14,8 @@ char* __saveds __asm GetNodePath(register __a0 APTR node, register __a6 struct L
 APTR __saveds __asm GetProperty(register __a0 APTR node, register __a1 char *name, register __a6 struct LibDevBase *base);
 APTR __saveds __asm GetFirstProperty(register __a0 APTR node, register __a6 struct LibDevBase *base);
 APTR __saveds __asm GetNextProperty(register __a0 APTR lastProperty, register __a6 struct LibDevBase *base);
+ULONG __saveds __asm GetRegAddress(register __a0 APTR node, register __d1 UWORD instance, register __a6 struct LibDevBase *base);
+ULONG __saveds __asm GetRegSize(register __a0 APTR node, register __d1 UWORD instance, register __a6 struct LibDevBase *base);
 
 // Find node functions
 APTR __saveds __asm GetFirstChildNode(register __a0 char *path, register __a1 char *compatible, register __a6 struct LibDevBase *base);

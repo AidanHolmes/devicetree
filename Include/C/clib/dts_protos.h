@@ -5,7 +5,7 @@
 
 
 /*
-**	$VER: dts_protos.h 1.0 (11.06.2025)
+**	$VER: dts_protos.h 1.0 (14.06.2025)
 **
 **	C prototypes. For use with 32 bit integers only.
 **
@@ -23,6 +23,8 @@ char* DTS_GetNodePath(APTR node);
 APTR DTS_GetProperty(APTR node, char * name);
 APTR DTS_GetFirstProperty(APTR node);
 APTR DTS_GetNextProperty(APTR lastProperty);
+ULONG DTS_GetRegAddress(APTR node, ULONG instance);
+ULONG DTS_GetRegSize(APTR node, ULONG instance);
 APTR DTS_GetFirstChildNode(char * path, char * compatible);
 APTR DTS_GetNextSiblingNode(APTR node, char * compatible);
 APTR DTS_GetNodeByAlias(char * aliasName);

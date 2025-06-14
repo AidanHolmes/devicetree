@@ -212,70 +212,155 @@ APTR __saveds __asm GetNodeByLabel(register __a0 char *labelName, register __a6 
 	return NULL;
 }
 
-APTR __saveds __asm GetCompatibleNodeInstance(register __a0 char *compatibleStr, register __d1 UWORD instance, register __a6 struct LibDevBase *base)
+struct compatibleNodeInstanceParam{
+	char *compatible;
+	UWORD instanceCount;
+	UWORD instance;
+	struct devicetreeNode *found;
+};
+
+UWORD callbackCompatibleNodeInstance(struct devicetreeConfig *config, struct devicetreeNode *node, struct compatibleNodeInstanceParam *context)
 {
-	struct devicetreeNode *dtsnode = NULL, *dtsnew = NULL ;
 	struct devicetreeProperty *p;
 	struct devicetreeValue *v ;
-	UWORD instanceCount = 0;
+	if (p=getProperty(config, node, "compatible")){
+		for (v=p->values; v; v=v->next){
+			if (v->type == DT_VALUE_STRING){
+				if (dtStriCmp((char*)v->value, context->compatible, DT_MAX_TEMP_STR)){
+					if (context->instanceCount == context->instance){
+						context->found = node;
+						return DT_RETURN_STOP;
+					}
+					context->instanceCount += 1;
+				}
+			}
+		}
+	}
+	
+	return DT_RETURN_NOERROR;
+}
 
-	if ((dtsnode = &((struct devicetreeConfig*)base->libData)->topNode)){
-		// Walk all nodes
-		while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew = dtsnode->parent->next)) ){
-			dtsnode = dtsnew ;
+APTR __saveds __asm GetCompatibleNodeInstance(register __a0 char *compatibleStr, register __d1 UWORD instance, register __a6 struct LibDevBase *base)
+{
+	struct compatibleNodeInstanceParam param ;
+
+	param.instanceCount = 0;
+	param.compatible = compatibleStr;
+	param.instance = instance ;
+	param.found = NULL ;
+	walkAllNodes((struct devicetreeConfig*)base->libData, &(((struct devicetreeConfig*)base->libData)->topNode), callbackCompatibleNodeInstance, &param);
+
+	return param.found;
+}
+
+struct compatibleNodeOKAYParam{
+	char *compatible;
+	struct devicetreeNode *found;
+};
+
+UWORD callbackCompatibleNodeOKAY(struct devicetreeConfig *config, struct devicetreeNode *node, struct compatibleNodeInstanceParam *context)
+{
+	struct devicetreeProperty *p;
+	struct devicetreeValue *v ;
+	BOOL matchingNode = FALSE;
 			
-			if (p=getProperty((struct devicetreeConfig*)base->libData, dtsnode, "compatible")){
-				for (v=p->values; v; v=v->next){
-					if (v->type == DT_VALUE_STRING){
-						if (dtStriCmp((char*)v->value, compatibleStr, DT_MAX_TEMP_STR)){
-							if (instanceCount == instance){
-								return dtsnode;
-							}
-							instanceCount += 1;
-						}
+	if (p=getProperty(config, node, "compatible")){
+		for (v=p->values; v; v=v->next){
+			if (v->type == DT_VALUE_STRING){
+				if (dtStriCmp((char*)v->value, context->compatible, DT_MAX_TEMP_STR)){
+					matchingNode = TRUE ;
+				}
+			}
+		}
+	}
+	if (matchingNode){
+		if (p=getProperty(config, node, "status")){
+			for (v=p->values; v; v=v->next){
+				if (v->type == DT_VALUE_STRING){
+					if (dtStriCmp((char*)v->value, "okay", DT_MAX_TEMP_STR)){
+						context->found = node;
+						return DT_RETURN_STOP;
 					}
 				}
 			}
 		}
 	}
-	return NULL;
+	return DT_RETURN_NOERROR;
 }
 
 APTR __saveds __asm GetCompatibleNodeOKAY(register __a0 char *compatibleStr, register __a6 struct LibDevBase *base)
 {
-	struct devicetreeNode *dtsnode = NULL, *dtsnew = NULL ;
-	struct devicetreeProperty *p;
-	struct devicetreeValue *v ;
-	BOOL matchingNode;
+	struct compatibleNodeOKAYParam param ;
+
+	param.compatible = compatibleStr;
+	param.found = NULL ;
+	walkAllNodes((struct devicetreeConfig*)base->libData, &(((struct devicetreeConfig*)base->libData)->topNode), callbackCompatibleNodeOKAY, &param);
+
+	return param.found;
+}
+
+ULONG __saveds __asm GetRegAddress(register __a0 APTR node, register __d1 UWORD instance, register __a6 struct LibDevBase *base)
+{
+	struct TagItem tags[5], *pti=NULL;
+	UWORD size = 0;
+	ULONG ret = 0xFFFFFFFF, size_cell, address_cell;
 	
-	if ((dtsnode = &((struct devicetreeConfig*)base->libData)->topNode)){
-		// Walk all nodes
-		while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew = dtsnode->parent->next)) ){
-			dtsnode = dtsnew ;
-			
-			matchingNode = FALSE ;
-			
-			if (p=getProperty((struct devicetreeConfig*)base->libData, dtsnode, "compatible")){
-				for (v=p->values; v; v=v->next){
-					if (v->type == DT_VALUE_STRING){
-						if (dtStriCmp((char*)v->value, compatibleStr, DT_MAX_TEMP_STR)){
-							matchingNode = TRUE ;
-						}
-					}
-				}
-			}
-			if (matchingNode){
-				if (p=getProperty((struct devicetreeConfig*)base->libData, dtsnode, "status")){
-					for (v=p->values; v; v=v->next){
-						if (v->type == DT_VALUE_STRING){
-							if (dtStriCmp((char*)v->value, "okay", DT_MAX_TEMP_STR)){
-								return dtsnode;
-							}
-						}
-					}
-				}
-			}
-		}
+	getSizeAddressCells((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node, &size_cell, &address_cell);
+	if (address_cell == 0){
+		return ret;
 	}
-	return NULL;
+	
+	size = getRegActual((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node, tags, 5);
+	if (((instance+1)*(size_cell+address_cell)) > size){ // no entry for this instance
+		return ret;
+	}
+	
+	if (size > 4 && ((instance+1)*(size_cell+address_cell)) > 4){
+		if (!(pti = AllocVec(sizeof(struct TagItem) * (size+1), MEMF_ANY | MEMF_CLEAR))){
+			return ret;
+		}
+		getRegActual((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node, pti, size+1);
+	}
+	
+	if (pti){
+		ret = pti[(instance*(size_cell+address_cell))+(address_cell-1)].ti_Data;
+		FreeVec(pti);
+	}else{
+		ret = tags[(instance*(size_cell+address_cell))+(address_cell-1)].ti_Data;
+	}
+	
+	return ret;
+}
+
+ULONG __saveds __asm GetRegSize(register __a0 APTR node, register __d1 UWORD instance, register __a6 struct LibDevBase *base)
+{
+	struct TagItem tags[5], *pti=NULL;
+	UWORD size = 0;
+	ULONG ret = 0xFFFFFFFF, size_cell, address_cell;
+	
+	getSizeAddressCells((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node, &size_cell, &address_cell);
+	if (address_cell == 0){
+		return ret;
+	}
+	
+	size = getRegRelative((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node, tags, 5);
+	if (((instance+1)*(size_cell+address_cell)) > size){ // no entry for this instance
+		return ret;
+	}
+	
+	if (size > 4 && ((instance+1)*(size_cell+address_cell)) > 4){
+		if (!(pti = AllocVec(sizeof(struct TagItem) * (size+1), MEMF_ANY | MEMF_CLEAR))){
+			return ret;
+		}
+		getRegRelative((struct devicetreeConfig*)base->libData, (struct devicetreeNode*)node, pti, size+1);
+	}
+	
+	if (pti){
+		ret = pti[(instance*(size_cell+address_cell))+(address_cell)+(size_cell-1)].ti_Data;
+		FreeVec(pti);
+	}else{
+		ret = tags[(instance*(size_cell+address_cell))+(address_cell)+(size_cell-1)].ti_Data;
+	}
+	
+	return ret;
 }

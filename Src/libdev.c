@@ -167,6 +167,8 @@ const APTR vectors[] =
 	(APTR)GetProperty,
 	(APTR)GetFirstProperty,
 	(APTR)GetNextProperty,
+	(APTR)GetRegAddress,
+	(APTR)GetRegSize,
 	(APTR)GetFirstChildNode,
 	(APTR)GetNextSiblingNode,
 	(APTR)GetNodeByAlias,

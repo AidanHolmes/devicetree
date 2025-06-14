@@ -30,9 +30,14 @@
 #define DT_RETURN_PARAM_ERROR		3
 #define DT_RETURN_REPLAY			4
 #define DT_RETURN_SYSERR			5
+#define DT_RETURN_STOP				6
+
+#define DT_DEFAULT_ADDRESS_CELL_VALUE  1
+#define DT_DEFAULT_SIZE_CELL_VALUE     1
 
 #define DT_ENCODED_VALUE_U32		TAG_USER+0
 #define DT_ENCODED_VALUE_REFERENCE 	TAG_USER+1
+#define DT_ENCODED_VALUE_REGUPDATED	TAG_USER+2
 
 struct devicetreeObject;
 struct devicetreeValue;
@@ -103,6 +108,7 @@ struct devicetreeNode{
 };
 
 typedef UWORD (*dt_object_callback)(struct devicetreeObject *obj) ;
+typedef UWORD (*dt_walk_callback)(struct devicetreeConfig *config, struct devicetreeNode *node, void *context) ;
 
 enum enConfigState {dtconfigStateNode, dtconfigStateProperty, dtconfigStateCommand, dtconfigStateComment, dtconfigStateCommentBlock};
 enum enPropertyState {dtpropUnknown, dtpropLogic, dtpropArray, dtpropByteString, dtpropText, dtpropReference};
@@ -215,5 +221,29 @@ const char *getNodePath(struct devicetreeConfig *config, struct devicetreeNode *
 // Very specific function to obtain a node reference from a property value. This is common for /chosen and /aliases node data.
 // Returns NULL if no match or value isn't a reference
 struct devicetreeNode* getReferenceNodePropertyByPath(struct devicetreeConfig *config, char *path, char *nodeName);
+
+// Get the #size-cell and #address-cell property values for a node. This queries the parent node for the values or returns defaults
+// size_cell and address_cell can be NULL. If not set then will not be searched for.
+// Returns TRUE if values found, otherwise FALSE to indicate a default was used.
+BOOL getSizeAddressCells(struct devicetreeConfig *config, struct devicetreeNode *node, ULONG *size_cell, ULONG *address_cell);
+
+// Get the REG property value from a node. This will query parent values if REG is not set at node (no idea if this is the right approach or bad DTS)
+// regValues must be allocated to the right length (+1 for TAG_DONE) and the total number of tags (including TAG_DONE) specified in size.
+// Function allows NULL regValues entry to just return the number of entries.
+// Function returns number of tags populated with REG entries (or would have been if regValues is smaller)
+// Note that some DTS specify as reg = <0x01 0x0A 0x10 0x08> or reg = <0x01 0x0A>, <0x10 0x08>. Both are allowed as the code just flattens these into one
+// list of reg values. Any bad formatting or misalignment to #size-cell and #address-cell will mess up the results.
+UWORD getRegRelative(struct devicetreeConfig *config, struct devicetreeNode *node, struct TagItem *regValues, UWORD size);
+
+// This is quite a complex function, which obtains a nodes reg and then reads the parents ranges property.
+// If ranges contain a mapping then the node reg address will be modified to finally provide an actual address.
+// This function will continue as long as the parent nodes define a ranges property. No ranges property means that the parent and child
+// have no reg property mapping relationship and therefore makes no sense to continue.
+// Returns number of reg values and behaves the same as getRegRelative with parameters.
+UWORD getRegActual(struct devicetreeConfig *config, struct devicetreeNode *node, struct TagItem *regValues, UWORD size);
+
+// Visit all nodes from provide node (inclusive). fn will be called with config and node. 
+// Walk visits from top and transverses down to child nodes before proceeding to next siblings
+UWORD walkAllNodes(struct devicetreeConfig *config, struct devicetreeNode *node, dt_walk_callback fn, void *context);
 
 #endif

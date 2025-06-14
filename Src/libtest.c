@@ -13,14 +13,13 @@
 
 int main (int argc, char **argv)
 {
-	APTR dtBus=NULL, n=NULL, p=NULL, thisNode=NULL, v=NULL ;
+	APTR dtBus=NULL, n=NULL, p=NULL ;
 	struct Library *DtsParserBase = NULL ;
-	char *modelName, *nodeAddress;
-	ULONG *address;
+	char *modelName;
+	ULONG address, size;
+	UWORD i = 0;
 	
-	DtsParserBase = OpenLibrary("dts.library", 0);
-	
-	if (!DtsParserBase){
+	if (!(DtsParserBase = OpenLibrary("dts.library", 0))){
 		printf("Cannot open device tree library\n");
 		return 0;
 	}
@@ -30,45 +29,17 @@ int main (int argc, char **argv)
 		goto exit;
 	}
 	
-	if ((n = DTS_GetFirstChildNode("/bus", "clockport-spi"))){
-		printf("Found a compatible clockport device - ");
+	printf("Available compatible devices in DTS:\n");
+	while((n=DTS_GetCompatibleNodeInstance("niklas,genericspi",i))){
+		address = DTS_GetRegAddress(n, 0); // Get instance 0 of a register address for the node at bus level
+		size = DTS_GetRegSize(n, 0); // Get instance 0 of a register size for the node device
+		printf("  Node: %s, Address: 0x%04X, Size: %u\n", DTS_GetNodeName(n), address, size);
 		if ((p=DTS_GetProperty(n, "model"))){
-			if ((modelName = DTS_GetPropertyStringValue(p))){
-				printf("%s\n", modelName);
-				if (strcmp(modelName, "niklas,spider-v1") == 0){
-					// This is the model and compatability we were looking for
-					thisNode = n;
-				}
-			}else{
-				printf("(Error obtaining model name)\n");
-			}
-		}else{
-			printf("(No model info)\n");
-		}
-	}else{
-		printf("Couldn't find any child nodes in the /bus node\n");
-		goto exit;
-	}
-	
-	printf("\n");
-	
-	if (thisNode){
-		printf("Found the config node required:\n");
-		printf("    [Name: %s]", DTS_GetNodeName(thisNode));
-		if ((nodeAddress = DTS_GetNodeAddress(thisNode)) && nodeAddress[0] != '\0'){
-			printf("@[Address: %s]\n", nodeAddress);
-		}
-
-		if ((p=DTS_GetProperty(n, "reg"))){
-			for(v=DTS_GetFirstPropertyValue(p); v; v=DTS_GetNextPropertyValue(v)){
-				if (DTS_GetValueType(v) == DT_VALUE_ULONG_ARRAY && DTS_GetValueSize(v) >= 1){
-					address = (ULONG*)DTS_GetValue(v);
-					printf("    [Reg value specifies device at address 0x%04X]\n", address[0]);
-				}
+			if ((modelName=DTS_GetPropertyStringValue(p))){
+				printf("  -> Model: %s\n", modelName);
 			}
 		}
-	}else{
-		printf("Couldn't find config node needed to get address details\n");
+		i += 1;
 	}
 	
 exit:

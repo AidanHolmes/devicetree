@@ -147,6 +147,21 @@ static struct devicetreeReference* _getReference(struct devicetreeConfig *config
 	return r;
 }
 
+static struct devicetreeReference* _clearReferenceByNode(struct devicetreeConfig *config, struct devicetreeNode *node)
+{
+	// Searches by node and removes node link from references (if exist). Returns altered reference
+	struct devicetreeReference *r ;
+	
+	for	(r=config->refTop; r; r=r->next){
+		if (r->node == node){
+			r->node = NULL;
+			return r;
+		}
+	}
+	
+	return NULL;
+}
+
 static struct devicetreeReference* _createReference(struct devicetreeConfig *config, char *name, char *path, ULONG *phandle)
 {
 	// No duplicate check performed in this call. Use _getReference to find an existing record and only
@@ -285,6 +300,7 @@ static void _deleteNode(struct devicetreeConfig *config, struct devicetreeNode *
 				if (dtsnode->prev){
 					dtsnode->prev->next = dtsnode->next;
 				}
+				_clearReferenceByNode(config, dtsnode); // clear any reference to the node (don't need to confirm return value)
 				delnode = dtsnode ;
 				FreeVec(delnode);
 				if (dtsnode == node){
@@ -751,6 +767,18 @@ static UWORD _parseProperty(struct devicetreeConfig *config, char c)
 				default:
 					// other text - is this a label or calculation?
 					_pushInChar(config->temp, c, &config->tempIndex, DT_MAX_TEMP_STR);
+					if(config->lastchar == '/'){
+						if (c == '/' || c == '*'){
+							if (c == '*'){
+								config->state = dtconfigStateCommentBlock;
+							}else if(c == '/'){
+								config->state = dtconfigStateComment;
+							}
+							config->commentstate = dtcommentVar;
+							_popOutChar(config->temp, &config->tempIndex);
+							_popOutChar(config->temp, &config->tempIndex);
+						}
+					}
 			}
 			break;
 		case dtpropArray:
@@ -1713,9 +1741,34 @@ struct devicetreeNode* getReferenceNodePropertyByPath(struct devicetreeConfig *c
 	return NULL; // No node or value found
 }
 
+UWORD walkAllNodes(struct devicetreeConfig *config, struct devicetreeNode *node, dt_walk_callback fn, void *context)
+{
+	struct devicetreeNode *dtsnode, *dtsnew ;
+	UWORD ret = DT_RETURN_NOERROR;
+
+	if ((dtsnew = node)){
+		do{
+			do{
+				dtsnode = dtsnew ;
+				if (fn){
+					if ((ret=fn(config, dtsnode, context)) != DT_RETURN_NOERROR){
+						if (ret == DT_RETURN_STOP){
+							ret = DT_RETURN_NOERROR;
+						}
+						return ret ;
+					}
+				}
+			}while ( (dtsnew=dtsnode->child) || (dtsnew=dtsnode->next) || (dtsnode->parent && (dtsnew=dtsnode->parent->next)) );
+			while (!(dtsnew=dtsnode->next) && (dtsnew = dtsnode->parent) && dtsnew != node){
+				dtsnode = dtsnew;
+			}
+		}while(dtsnew != node);
+	}
+}
 #define _ISWS(x) (x == ' ' || x == '\t' || x == '\n' || x == '\t')
 /* inline */ void dtTrimStr(char *str)
 {
+	
 	char *p, *q;
 	BOOL trimming = TRUE ;
 	
@@ -1740,4 +1793,205 @@ struct devicetreeNode* getReferenceNodePropertyByPath(struct devicetreeConfig *c
 			}
 		}
 	}
+}
+
+BOOL getSizeAddressCells(struct devicetreeConfig *config, struct devicetreeNode *node, ULONG *size_cell, ULONG *address_cell)
+{
+	struct devicetreeProperty *p = NULL;
+	struct devicetreeValue *v = NULL;
+	struct TagItem *u32;
+	BOOL found = TRUE ;
+	
+	// As defined in 0.4 spec, the parent must define size and address cells, otherwise defaults assumed
+	if (node->parent){
+		if (size_cell){
+			if ((p = getProperty(config, node->parent, "#size-cell"))){
+				v = p->values;
+				if(v && v->type == DT_VALUE_ULONG_ARRAY && v->value){
+					u32 = (struct TagItem*)v->value ;
+					if (u32->ti_Tag == DT_ENCODED_VALUE_U32){
+						*size_cell = u32->ti_Data;
+					}
+				}
+			}else{
+				*size_cell = DT_DEFAULT_SIZE_CELL_VALUE;
+				found = FALSE;
+			}
+		}
+		if (address_cell){
+			if ((p = getProperty(config, node->parent, "#address-cell"))){
+				v = p->values;
+				if(v && v->type == DT_VALUE_ULONG_ARRAY && v->value){
+					u32 = (struct TagItem*)v->value ;
+					if (u32->ti_Tag == DT_ENCODED_VALUE_U32){
+						*address_cell = u32->ti_Data;
+					}
+				}
+			}else{
+				*address_cell = DT_DEFAULT_ADDRESS_CELL_VALUE;
+				found = FALSE;
+			}
+		}
+	}
+	return found;
+}
+
+UWORD getRegRelative(struct devicetreeConfig *config, struct devicetreeNode *node, struct TagItem *regValues, UWORD size)
+{
+	struct devicetreeNode *n = NULL ;
+	struct devicetreeProperty *p = NULL;
+	struct devicetreeValue *v = NULL;
+	UWORD i=0, count=0;
+	struct TagItem *regVals;
+	// Returns actual number of reg values needed
+	
+	for(n = node;n;n=n->parent){
+		if ((p = getProperty(config, n, "reg"))){
+			for (v=p->values;v;v=v->next){
+				if(v->type == DT_VALUE_ULONG_ARRAY){
+					if (v->value){
+						i=0;
+						for(regVals = v->value;regVals->ti_Tag != TAG_DONE;regVals++){
+							if(regValues && size > 0){
+								if (i < size-1){
+									regValues[i++] = *regVals;
+								}
+							}
+							count++;
+						}
+					}
+					if(regValues && size > 0){
+						regValues[i].ti_Tag = TAG_DONE;// Ensure termination of tag item list
+					}
+				}
+			}
+			if (count > 0){
+				// Found a reg value either in the node or in a parent
+				return count;
+			}
+		}
+	}
+	
+	return 0;
+}
+
+UWORD getRegActual(struct devicetreeConfig *config, struct devicetreeNode *node, struct TagItem *regValues, UWORD size)
+{
+	// Returns actual number of reg values needed
+	struct devicetreeNode *n = NULL ;
+	struct devicetreeProperty *p = NULL;
+	struct devicetreeValue *v = NULL;
+	UWORD i=0, j=0, count=0;
+	ULONG childsizecell, childaddresscell, rangesizecell, rangeaddresscell, originalsizecell, originaladdresscell, addressbase, sizebase, rangebase;
+	struct TagItem *regVals, *rangeVals;
+	
+	for(n = node;n;n=n->parent){
+		if ((p = getProperty(config, n, "reg"))){
+			for (v=p->values;v;v=v->next){
+				if(v->type == DT_VALUE_ULONG_ARRAY){
+					if (v->value){
+						for(regVals = v->value;regVals->ti_Tag != TAG_DONE;regVals++){
+							if(regValues && size > 0){
+								if (i < size-1){
+									regValues[i++] = *regVals;
+								}
+							}
+							count++;
+						}
+					}
+					if(regValues && size > 0){
+						regValues[i].ti_Tag = TAG_DONE;// Ensure termination of tag item list
+					}
+				}
+			}
+			if (count > 0){
+				// Found a reg value either in the node or in a parent
+				// Now interested in any alterations in the ranges property
+				break;
+			}
+		}
+	}
+	
+	if (!n){
+		return 0 ; // Failed to find any reg values
+	}
+	
+	// Need to understand the format of the reg values obtained. This is to help address range changes
+	getSizeAddressCells(config, n, &originalsizecell, &originaladdresscell);
+	
+	if (originaladdresscell == 0){
+		// Nothing to map as the reg has no address
+		return count;
+	}
+	
+	// Prime child cell values for conversion
+	childsizecell = originalsizecell;
+	childaddresscell = originaladdresscell;
+	
+	// keep iterating up the nodes for any ranges settings which would alter the 
+	// addresses
+	for(n=n->parent;n;n=n->parent){
+		getSizeAddressCells(config, n, &rangesizecell, &rangeaddresscell); // Get the parent properties
+		if ((p = getProperty(config, n, "ranges"))){
+			for (v=p->values;v;v=v->next){
+				if(v->type == DT_VALUE_ULONG_ARRAY){
+					if (v->value){
+						i=1;
+						for(rangeVals = v->value;rangeVals->ti_Tag != TAG_DONE;rangeVals++){
+							if (i == childaddresscell){
+								addressbase = rangeVals->ti_Data;
+							}
+							if (rangeaddresscell && (i == (childaddresscell+rangeaddresscell))){
+								rangebase = rangeVals->ti_Data;
+							}
+							if (rangesizecell && (i == (childaddresscell+rangeaddresscell+rangesizecell))){
+								sizebase = rangeVals->ti_Data;
+							}
+							if ((i % (childaddresscell+rangeaddresscell+rangesizecell))==0){
+								// Completed 1 set of ranges. Need to translate to original child values
+								// Iterate through all original node reg values
+								j=1;
+								for(regVals=regValues; regVals->ti_Tag != TAG_DONE; regVals++){
+									if(regVals->ti_Tag == DT_ENCODED_VALUE_U32){
+										if (j == originaladdresscell){
+											if (regVals->ti_Data >= addressbase && regVals->ti_Data <= (addressbase+sizebase)){
+												// This address needs remapping
+												regVals->ti_Data += rangebase;
+												regVals->ti_Tag = DT_ENCODED_VALUE_REGUPDATED;
+											}
+										}
+									}
+									
+									if ((j % (originaladdresscell+originalsizecell))==0){
+										j = 1; // New set of reg entries
+									}else{
+										j++;
+									}
+								}
+								i=1;
+							}else{
+								i++; // index through all values - cannot assume values actually match the DTS entered vals
+							}
+						}
+					}
+				}
+			}
+			// Remove all flags to indicate updates to an address
+			for(regVals=regValues; regVals->ti_Tag != TAG_DONE; regVals++){
+				if(regVals->ti_Tag == DT_ENCODED_VALUE_REGUPDATED){
+					regVals->ti_Tag = DT_ENCODED_VALUE_U32;
+				}
+			}
+			
+		}else{
+			// No ranges property set which means there's no relation between the child
+			// and parent mapping. Stop here.
+			break;
+		}
+		// Update parent values to now be child values as we iterate up to parent
+		childsizecell = rangesizecell;
+		childaddresscell = rangeaddresscell;
+	}
+	
+	return count;
 }

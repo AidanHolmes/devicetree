@@ -24,5 +24,6 @@
 					<0xDA0000 0x20000>; // IDE controller
 			compatible = "commodore,gayleaga";
 			interrupts-extended = <&inthandler 2>, <&inthandler 6>;
+		};
 	};
 };

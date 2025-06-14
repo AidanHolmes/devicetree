@@ -1,20 +1,20 @@
 # Version 
 MAJOR = 1
 MINOR = 0
-DATE = "28.05.2025"
+DATE = "14.06.2025"
 LIBNAME = dts.library
 
 DEFSTD = DEFINE=AS_LIBRARY DEFINE=LIBDEVMAJOR=$(MAJOR) DEFINE=LIBDEVMINOR=$(MINOR) DEFINE=LIBDEVDATE=$(DATE) DEFINE=LIBDEVNAME="$(LIBNAME)"
 
 # Test config
-SCOPTS = IncludeDirectory=/Include/C NOSTACKCHECK DEFINE=_DEBUG DEFINE=DEBUG_SERIAL debug=full $(DEFSTD) 
+#SCOPTS = IncludeDirectory=/Include/C NOSTACKCHECK DEFINE=_DEBUG DEFINE=DEBUG_SERIAL debug=full $(DEFSTD) 
 # DEBUG=SYMBOLFLUSH
 
 # Release config with debug
-#SCOPTS = NOSTACKCHECK OPTIMIZE Optimizerinline OptimizerComplexity=10 OptimizerGlobal OptimizerDepth=1 OptimizerTime OptimizerSchedule OptimizerPeephole PARAMETERS=stack DEFINE=DEBUG_SERIAL DEFINE=_DEBUG $(DEFSTD)
+#SCOPTS = IncludeDirectory=/Include/C NOSTACKCHECK OPTIMIZE Optimizerinline OptimizerComplexity=10 OptimizerGlobal OptimizerDepth=1 OptimizerTime OptimizerSchedule OptimizerPeephole PARAMETERS=stack DEFINE=DEBUG_SERIAL DEFINE=_DEBUG $(DEFSTD)
 
 # optimised and release version
-#SCOPTS = NOSTACKCHECK OPTIMIZE Optimizerinline OptimizerComplexity=10 OptimizerGlobal OptimizerDepth=1 OptimizerTime OptimizerSchedule OptimizerPeephole PARAMETERS=stack $(DEFSTD)
+SCOPTS = IncludeDirectory=/Include/C NOSTACKCHECK OPTIMIZE Optimizerinline OptimizerComplexity=10 OptimizerGlobal OptimizerDepth=1 OptimizerTime OptimizerSchedule OptimizerPeephole PARAMETERS=stack $(DEFSTD)
 
 
 all: dtstest dtslibrary $(LIBNAME)
